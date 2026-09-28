@@ -1,0 +1,86 @@
+name: CI
+
+permissions:
+  contents: read
+  packages: write
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  check:
+    name: Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+      - name: Web
+        working-directory: web
+        run: bun install --frozen-lockfile && bun run build
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          registry-url: https://npm.pkg.github.com
+      - name: Chart
+        working-directory: deploy/pulumi
+        run: |
+          npm ci
+          pkg=$(node -p "require('./package.json').version")
+          app=$(sed -n 's/^export const APP_VERSION = "\(.*\)";$/\1/p' src/versions.ts)
+          [ "$pkg" = "$app" ] || { echo "::error::package.json=$pkg APP_VERSION=$app"; exit 1; }
+          npx tsc -p tsconfig.json
+          npm run build
+
+  # The image and the chart share the chart's version. A version is released
+  # once: pushing without bumping it rebuilds the sha tag only, so a pinned
+  # deploy never changes under its pin.
+  release:
+    name: Release
+    needs: check
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - id: version
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          version=$(node -p "require('./deploy/pulumi/package.json').version")
+          if gh api "/users/radiosilence/packages/npm/transmet-pulumi/versions" -q '.[].name' 2>/dev/null | grep -qx "$version"; then
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/radiosilence/transmet:sha-${{ github.sha }}
+            ${{ steps.version.outputs.release == 'true' && format('ghcr.io/radiosilence/transmet:{0}', steps.version.outputs.version) || '' }}
+          labels: org.opencontainers.image.source=https://github.com/radiosilence/transmet
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - uses: actions/setup-node@v5
+        if: steps.version.outputs.release == 'true'
+        with:
+          node-version: 24
+          registry-url: https://npm.pkg.github.com
+      - name: Publish chart
+        if: steps.version.outputs.release == 'true'
+        working-directory: deploy/pulumi
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm ci && npm publish

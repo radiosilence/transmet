@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Pushes pages/ (from scripts/extract.py) as ghcr.io/radiosilence/transmet-pages,
+# a data-only image the app image copies from. Built with crane because it is
+# one tarball layer and needs no Docker daemon. Needs a gh login with
+# write:packages.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+repo=ghcr.io/radiosilence/transmet-pages
+tag=${1:-1}
+tarball=$(mktemp -t transmet-pages).tar
+
+gh auth token | crane auth login ghcr.io -u "$(gh api user -q .login)" --password-stdin
+COPYFILE_DISABLE=1 tar --no-xattrs --uid 0 --gid 0 -cf "$tarball" pages
+
+# One image per architecture over the same layer, so `COPY --from` resolves on
+# either builder platform; the layer uploads once and is shared.
+for arch in amd64 arm64; do
+  crane append --platform "linux/$arch" -f "$tarball" -t "$repo:$tag-$arch"
+  # The source label links the package to the repository, which is what lets
+  # that repository's workflows pull it with their own token.
+  crane mutate "$repo:$tag-$arch" \
+    --label org.opencontainers.image.source=https://github.com/radiosilence/transmet \
+    -t "$repo:$tag-$arch"
+done
+crane index append -m "$repo:$tag-amd64" -m "$repo:$tag-arm64" -t "$repo:$tag"
+rm -f "$tarball"
