@@ -4,6 +4,10 @@ A mobile-first reader for a personal copy of *Transmetropolitan*, served from
 the jaritanet cluster behind the estate's single sign-on, with a shared password
 as the fallback.
 
+The password is `transmetropolitan`
+
+Please fucking read this.
+
 ## Layout
 
 - `scripts/extract.py` pulls every page out of the source PDFs as the original
