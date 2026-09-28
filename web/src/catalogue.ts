@@ -37,3 +37,38 @@ export function label(issue: Issue) {
 }
 
 export const pageUrl = (p: string) => `/pages/${p}`;
+
+/**
+ * What a screen reader is told about each page: the lettering, transcribed by
+ * scripts/ocr.py, and where scripts/describe.py has run, what the page shows.
+ * Together they are the issue's text edition.
+ */
+export type Words = { text: string[]; scene?: string }[];
+
+async function json<T>(url: string) {
+  const res = await fetch(url).catch(() => null);
+  return res?.ok ? ((await res.json()) as T) : undefined;
+}
+
+async function loadWords(id: string): Promise<Words> {
+  const [text, scene] = await Promise.all([
+    json<string[][]>(pageUrl(`${id}/text.json`)),
+    json<{ pages: string[] }>(pageUrl(`${id}/scene.json`)),
+  ]);
+  return (text ?? []).map((t, i) => ({ text: t, scene: scene?.pages[i] }));
+}
+
+const words = new Map<string, Promise<Words>>();
+
+/** One request per issue per visit, shared by the reader and the text edition. */
+export function wordsFor(id: string) {
+  let w = words.get(id);
+  if (!w) words.set(id, (w = loadWords(id)));
+  return w;
+}
+
+export function pageWords(i: number, page: Words[number] | undefined) {
+  if (!page) return `Page ${i + 1}.`;
+  const lettering = page.text.length ? page.text.map((t) => `“${t}”`).join(" ") : "No lettering.";
+  return [`Page ${i + 1}.`, page.scene, lettering].filter(Boolean).join(" ");
+}

@@ -23,6 +23,17 @@ as the fallback.
   open issue and the next few (configurable) are saved automatically, and any
   issue or arc can be saved explicitly for reading without signal. Progress is
   kept in `localStorage`, per device.
+- `scripts/ocr.py` transcribes the lettering on each page with macOS Vision
+  (local, free) into `<issue>/text.json`, which the reader gives screen readers
+  as alt text and announces on each page turn. Sound effects and display
+  lettering are dropped because they read aloud as noise; reading order is by
+  position, so it is approximate on complex layouts.
+- `scripts/describe.py` writes what each page shows into `<issue>/scene.json`,
+  using Claude Haiku through the `claude` CLI. Pages go a dozen at a time with
+  their transcript, a character guide and a running story summary carried
+  across issues, so descriptions keep track of who is who. With the transcript
+  it makes each issue's text edition at `/text/<issue>`, readable straight
+  through by a screen reader.
 - `deploy/pulumi` is `@radiosilence/transmet-pulumi`, the chart jaritanet
   consumes. It shares its version with the image.
 
@@ -37,7 +48,9 @@ private. The cluster pulls with a registry credential the chart takes as
 ```sh
 rsync -a lady:/srv/files/.transmetropolitan/c2c/ source/
 uvx --with pymupdf --with pillow python scripts/extract.py source pages
-scripts/push-pages 1
+uvx --with ocrmac python scripts/ocr.py pages
+uvx --with pillow python scripts/describe.py pages
+scripts/push-pages 2
 ```
 
 ## Releasing

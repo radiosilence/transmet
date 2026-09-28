@@ -208,7 +208,8 @@ Bun.serve({
 
     if (path.startsWith("/pages/")) {
       const rel = path.slice("/pages".length);
-      const cache = rel === "/manifest.json" ? REVALIDATE : IMMUTABLE;
+      // Transcripts can be regenerated under the same name; images cannot.
+      const cache = rel.endsWith(".json") ? REVALIDATE : IMMUTABLE;
       return (
         (await file(under(pagesDir, rel), cache)) ??
         new Response("not found", { status: 404 })
