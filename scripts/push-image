@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# Builds and pushes ghcr.io/radiosilence/transmet from this machine, with no
+# Docker daemon: crane appends a pages layer and an app layer to Bun's
+# distroless image. The equivalent of the Dockerfile for when CI cannot run or
+# cannot see the pages. amd64 only, which is what the VPS it is pinned to runs.
+# Needs a gh login with write:packages.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+repo=ghcr.io/radiosilence/transmet
+version=$(node -p "require('./deploy/pulumi/package.json').version")
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+
+gh auth token | crane auth login ghcr.io -u "$(gh api user -q .login)" --password-stdin
+
+(cd web && bun install --frozen-lockfile && bun run build)
+mkdir -p "$work/app"
+cp -R web/dist "$work/app/web"
+cp server/server.ts "$work/app/server.ts"
+
+export COPYFILE_DISABLE=1
+tar --no-xattrs --uid 0 --gid 0 -cf "$work/pages.tar" pages
+tar --no-xattrs --uid 0 --gid 0 -C "$work" -cf "$work/app.tar" app
+
+crane append --platform linux/amd64 -b oven/bun:1-distroless \
+  -f "$work/pages.tar" -f "$work/app.tar" -t "$repo:build"
+crane mutate "$repo:build" \
+  --entrypoint /usr/local/bin/bun,/app/server.ts \
+  --env PORT=3000 --env WEB_DIR=/app/web --env PAGES_DIR=/pages \
+  --user 65532:65532 \
+  --label org.opencontainers.image.source=https://github.com/radiosilence/transmet \
+  -t "$repo:$version"
+echo "pushed $repo:$version"
