@@ -1,6 +1,6 @@
 # transmet
 
-A mobile-first reader for a personal copy of *Transmetropolitan*, served from
+A mobile-first reader for a "personal" copy of *Transmetropolitan*, served from
 the jaritanet cluster behind the estate's single sign-on, with a shared password
 as the fallback.
 
