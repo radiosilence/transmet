@@ -1,6 +1,6 @@
 import PhotoSwipe, { type SlideData } from "photoswipe";
 import { useEffect, useRef, useState } from "react";
-import { arcOf, label, loadWords, pageUrl, pageWords, type Issue, type Words } from "./catalogue";
+import { arcOf, label, pageUrl, pageWords, wordsFor, type Issue, type Words } from "./catalogue";
 import { forget, keepAhead, save } from "./offline";
 import { navigate } from "./router";
 import { useDownloads, useShelf } from "./store";
@@ -79,7 +79,7 @@ export function Reader({ issue, issues }: { issue: Issue; issues: Issue[] }) {
     // The transcript arrives after the viewer opens; slides built from then on
     // carry it as alt text, and the live region covers the one already showing.
     let loaded: Words | undefined;
-    void loadWords(issue.id).then((pages) => {
+    void wordsFor(issue.id).then((pages) => {
       loaded = pages;
       setWords({ id: issue.id, pages });
     });
@@ -130,6 +130,9 @@ export function Reader({ issue, issues }: { issue: Issue; issues: Issue[] }) {
           <strong>{label(issue)}</strong>
           <span>{arcOf(issue)}</span>
         </div>
+        <a className="keep" href={`/text/${issue.id}`}>
+          Text
+        </a>
         <button
           className={`keep${saved ? " on" : ""}`}
           onClick={() => void (saved ? forget(issue) : save(issue))}

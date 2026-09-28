@@ -41,6 +41,7 @@ export const pageUrl = (p: string) => `/pages/${p}`;
 /**
  * What a screen reader is told about each page: the lettering, transcribed by
  * scripts/ocr.py, and where scripts/describe.py has run, what the page shows.
+ * Together they are the issue's text edition.
  */
 export type Words = { text: string[]; scene?: string }[];
 
@@ -49,12 +50,21 @@ async function json<T>(url: string) {
   return res?.ok ? ((await res.json()) as T) : undefined;
 }
 
-export async function loadWords(id: string): Promise<Words> {
+async function loadWords(id: string): Promise<Words> {
   const [text, scene] = await Promise.all([
     json<string[][]>(pageUrl(`${id}/text.json`)),
-    json<string[]>(pageUrl(`${id}/scene.json`)),
+    json<{ pages: string[] }>(pageUrl(`${id}/scene.json`)),
   ]);
-  return (text ?? []).map((t, i) => ({ text: t, scene: scene?.[i] }));
+  return (text ?? []).map((t, i) => ({ text: t, scene: scene?.pages[i] }));
+}
+
+const words = new Map<string, Promise<Words>>();
+
+/** One request per issue per visit, shared by the reader and the text edition. */
+export function wordsFor(id: string) {
+  let w = words.get(id);
+  if (!w) words.set(id, (w = loadWords(id)));
+  return w;
 }
 
 export function pageWords(i: number, page: Words[number] | undefined) {

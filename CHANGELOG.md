@@ -2,8 +2,9 @@
 
 ## 0.3.0
 
-- Pages carry a transcript of their lettering, read out by screen readers as
-  alt text and on each page turn. Requires `transmet-pages:2`.
+- A text edition of each issue at `/text/<issue>`: a description of every page
+  and its lettering, for screen readers. The reader uses the same text as alt
+  text and announces it on each page turn. Requires `transmet-pages:2`.
 
 ## 0.2.0
 

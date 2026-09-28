@@ -94,32 +94,37 @@ function Cover({ issue, big }: { issue: Issue; big?: boolean }) {
   const cover = issue.pages[0]!;
 
   return (
-    <button
-      className={`cover${big ? " big" : ""}`}
-      data-cover={big ? undefined : issue.id}
-      onClick={() => open(issue, at && !at.done ? at.page : 0)}
-      aria-label={`${label(issue)}${at?.done ? ", read" : ""}`}
-    >
-      <img
-        src={pageUrl(cover.thumb)}
-        width={cover.w}
-        height={cover.h}
-        loading={big ? "eager" : "lazy"}
-        decoding="async"
-        alt=""
-      />
-      <span className="bag" />
-      <span className="sticker">{issue.number ?? issue.id.toUpperCase()}</span>
-      {at && !at.done && (
-        <span className="ribbon" style={{ "--p": (at.page + 1) / issue.pages.length } as CSSProperties} />
-      )}
-      {at?.done && <span className="stamp">Read</span>}
-      {downloading !== undefined ? (
-        <span className="saving" style={{ "--p": downloading } as CSSProperties} />
-      ) : (
-        saved && <span className="saved" title="On this device" />
-      )}
-    </button>
+    <>
+      <button
+        className={`cover${big ? " big" : ""}`}
+        data-cover={big ? undefined : issue.id}
+        onClick={() => open(issue, at && !at.done ? at.page : 0)}
+        aria-label={`${label(issue)}${at?.done ? ", read" : ""}`}
+      >
+        <img
+          src={pageUrl(cover.thumb)}
+          width={cover.w}
+          height={cover.h}
+          loading={big ? "eager" : "lazy"}
+          decoding="async"
+          alt=""
+        />
+        <span className="bag" />
+        <span className="sticker">{issue.number ?? issue.id.toUpperCase()}</span>
+        {at && !at.done && (
+          <span className="ribbon" style={{ "--p": (at.page + 1) / issue.pages.length } as CSSProperties} />
+        )}
+        {at?.done && <span className="stamp">Read</span>}
+        {downloading !== undefined ? (
+          <span className="saving" style={{ "--p": downloading } as CSSProperties} />
+        ) : (
+          saved && <span className="saved" title="On this device" />
+        )}
+      </button>
+      <a className="sr-only" href={`/text/${issue.id}`}>
+        Text edition of {label(issue)}
+      </a>
+    </>
   );
 }
 
