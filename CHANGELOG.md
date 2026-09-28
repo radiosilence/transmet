@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.1
+
+- Shelves have arrow buttons for a mouse, which cannot scroll them sideways.
+- While the reader's bars show, the page fits between them instead of under
+  them.
+
 ## 0.3.0
 
 - A text edition of each issue at `/text/<issue>`: a description of every page

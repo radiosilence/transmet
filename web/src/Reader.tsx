@@ -46,7 +46,12 @@ export function Reader({ issue, issues }: { issue: Issue; issues: Issue[] }) {
       bgOpacity: 1,
       loop: false,
       preload: [1, 4],
-      padding: { top: 0, bottom: 0, left: 0, right: 0 },
+      // While the bars show, the page fits between them rather than under them.
+      paddingFn: () => {
+        const bars = host.current?.classList.contains("chrome");
+        const bar = (edge: string) => host.current?.querySelector<HTMLElement>(`.bar.${edge}`)?.offsetHeight ?? 0;
+        return { top: bars ? bar("top") : 0, bottom: bars ? bar("bottom") : 0, left: 0, right: 0 };
+      },
       showHideAnimationType: start === 0 && thumb ? "zoom" : "fade",
       showAnimationDuration: 420,
       hideAnimationDuration: 320,
@@ -111,6 +116,10 @@ export function Reader({ issue, issues }: { issue: Issue; issues: Issue[] }) {
     };
   }, [issue, issues, next, total]);
 
+  useEffect(() => {
+    pswp.current?.updateSize(true);
+  }, [chrome]);
+
   // Keeps the current page's thumbnail centred in the scrubber as pages turn.
   useEffect(() => {
     scrubber.current
@@ -148,7 +157,14 @@ export function Reader({ issue, issues }: { issue: Issue; issues: Issue[] }) {
 
       <div className="bar bottom">
         <div className="count">{atEnd ? "The end" : `${index + 1} / ${total}`}</div>
-        <div className="scrubber" ref={scrubber}>
+        <div
+          className="scrubber"
+          ref={scrubber}
+          // A mouse wheel only scrolls vertically, and nothing else here does.
+          onWheel={(e) => {
+            if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) e.currentTarget.scrollLeft += e.deltaY;
+          }}
+        >
           {issue.pages.map((p, i) => (
             <button
               key={p.src}

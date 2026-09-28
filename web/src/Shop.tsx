@@ -1,4 +1,4 @@
-import { useEffect, useState, type CSSProperties } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { arcOf, label, pageUrl, shelves, type Issue } from "./catalogue";
 import { forgetAll, save, usage } from "./offline";
 import { navigate } from "./router";
@@ -63,6 +63,9 @@ function Shelf({ name, label: range, issues }: { name: string; label: string; is
   const downloads = useDownloads();
   const all = issues.every((i) => saved[i.id]);
   const busy = issues.some((i) => i.id in downloads);
+  const rack = useRef<HTMLDivElement>(null);
+  const slide = (dir: number) =>
+    rack.current?.scrollBy({ left: dir * rack.current.clientWidth * 0.8, behavior: "smooth" });
 
   return (
     <section className="shelf">
@@ -77,10 +80,18 @@ function Shelf({ name, label: range, issues }: { name: string; label: string; is
           {all ? "On this device" : busy ? "Bagging…" : "Take the lot"}
         </button>
       </div>
-      <div className="rack">
-        {issues.map((issue) => (
-          <Cover key={issue.id} issue={issue} />
-        ))}
+      <div className="rack-wrap">
+        <div className="rack" ref={rack}>
+          {issues.map((issue) => (
+            <Cover key={issue.id} issue={issue} />
+          ))}
+        </div>
+        <button className="nudge prev" onClick={() => slide(-1)} aria-label={`Earlier in ${name}`}>
+          ‹
+        </button>
+        <button className="nudge next" onClick={() => slide(1)} aria-label={`Later in ${name}`}>
+          ›
+        </button>
       </div>
       <div className="ledge" />
     </section>
