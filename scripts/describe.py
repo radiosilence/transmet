@@ -6,16 +6,19 @@ Pages go to Claude Haiku through the `claude` CLI, a dozen at a time with the
 lettering from scripts/ocr.py, a character guide, and the story so far. The
 story is carried from chunk to chunk and issue to issue, which is what lets a
 description say "Channon" rather than "a woman" and follow a plot across
-issues. Issues are therefore done in order, and an interrupted run resumes
-from the last finished issue's story.
+issues, so the issues of one run are done in order. A run starts from the
+story of the finished issue immediately before its first, or fresh if there is
+none, and resumes from the last finished issue if interrupted.
 
 Pages are downscaled first: the lettering is already transcribed, so the art
 only needs enough resolution to be recognised.
 
-Usage: uvx --with pillow python scripts/describe.py pages [issues]
+Usage: uvx --with pillow python scripts/describe.py pages [issue ids]
 
-`issues` stops after that many newly described issues. Each call's API-equivalent
-cost is printed, which is the measure of how much plan usage a run takes.
+Given issue ids, only those are described, which lets separate story arcs run
+in parallel at the cost of each arc starting without the one before it. Each
+call's API-equivalent cost is printed, which is the measure of how much plan
+usage a run takes.
 """
 
 import base64
@@ -93,12 +96,15 @@ def describe(issue, pages, text, first, story):
 
 if __name__ == "__main__":
     root = Path(sys.argv[1])
-    limit = int(sys.argv[2]) if len(sys.argv) > 2 else None
+    only = set(sys.argv[2:])
     story = ""
     for issue in json.loads((root / "manifest.json").read_text())["issues"]:
         out = root / issue["id"] / "scene.json"
         if out.exists():
             story = json.loads(out.read_text())["story"]
+            continue
+        if only and issue["id"] not in only:
+            story = ""
             continue
         name = issue["title"] or f"#{issue['number']}"
         text = json.loads((root / issue["id"] / "text.json").read_text())
@@ -109,7 +115,3 @@ if __name__ == "__main__":
             scenes += described
         out.write_text(json.dumps({"pages": scenes, "story": story}, ensure_ascii=False, separators=(",", ":")))
         print(f"{issue['id']}: described {len(scenes)} pages", flush=True)
-        if limit is not None:
-            limit -= 1
-            if limit == 0:
-                break
