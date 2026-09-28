@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.2
+
+- Sign-on failed with a Bad Gateway when the pod shared a node with the
+  ingress, because the token exchange went out to the provider's public
+  hostname and Cilium drops that. The chart takes `oidc.backchannel` to reach
+  the provider inside the cluster, and a failed exchange now returns to the
+  login page instead of timing out.
+
 ## 0.3.1
 
 - Shelves have arrow buttons for a mouse, which cannot scroll them sideways.
