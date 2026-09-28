@@ -12,7 +12,10 @@ from the last finished issue's story.
 Pages are downscaled first: the lettering is already transcribed, so the art
 only needs enough resolution to be recognised.
 
-Usage: uvx --with pillow python scripts/describe.py pages
+Usage: uvx --with pillow python scripts/describe.py pages [issues]
+
+`issues` stops after that many newly described issues. Each call's API-equivalent
+cost is printed, which is the measure of how much plan usage a run takes.
 """
 
 import base64
@@ -76,6 +79,8 @@ def describe(issue, pages, text, first, story):
                 input=message, capture_output=True, text=True, cwd=cwd,
             ).stdout
             result = next((json.loads(l) for l in out.splitlines() if '"type":"result"' in l), None)
+            if result:
+                print(f"  {issue} p{first}: ${result.get('total_cost_usd', 0):.4f}", flush=True)
             try:
                 reply = json.loads(re.search(r"\{.*\}", result["result"], re.S)[0])
                 if len(reply["pages"]) == len(pages):
@@ -88,6 +93,7 @@ def describe(issue, pages, text, first, story):
 
 if __name__ == "__main__":
     root = Path(sys.argv[1])
+    limit = int(sys.argv[2]) if len(sys.argv) > 2 else None
     story = ""
     for issue in json.loads((root / "manifest.json").read_text())["issues"]:
         out = root / issue["id"] / "scene.json"
@@ -103,3 +109,7 @@ if __name__ == "__main__":
             scenes += described
         out.write_text(json.dumps({"pages": scenes, "story": story}, ensure_ascii=False, separators=(",", ":")))
         print(f"{issue['id']}: described {len(scenes)} pages", flush=True)
+        if limit is not None:
+            limit -= 1
+            if limit == 0:
+                break
