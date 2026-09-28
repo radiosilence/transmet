@@ -28,6 +28,9 @@ const oidc = process.env.OIDC_ISSUER
       clientId: env("OIDC_CLIENT_ID"),
       clientSecret: env("OIDC_CLIENT_SECRET"),
       redirectUri: `${env("PUBLIC_URL")}/auth/callback`,
+      // The token exchange is server to server, so it can reach the provider
+      // inside the cluster rather than back out through its public hostname.
+      tokenUrl: process.env.OIDC_TOKEN_URL ?? `${process.env.OIDC_ISSUER}/oauth2/token`,
     }
   : undefined;
 
@@ -122,8 +125,14 @@ function redirect(location: string, cookies: string[] = []) {
  */
 async function exchange(code: string, verifier: string) {
   if (!oidc) return null;
-  const res = await fetch(`${oidc.issuer}/oauth2/token`, {
+  const res = await fetch(oidc.tokenUrl, {
     method: "POST",
+    // Hydra serves plain HTTP in-cluster and trusts a proxy's word that the
+    // client connection was TLS.
+    headers: { "x-forwarded-proto": "https" },
+    // Well inside Bun's idle timeout, so an unreachable provider sends the
+    // browser back to the login page instead of dropping the connection.
+    signal: AbortSignal.timeout(8000),
     body: new URLSearchParams({
       grant_type: "authorization_code",
       code,

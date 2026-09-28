@@ -38,7 +38,18 @@ export function createTransmet(
      * Single sign-on. The provider's own allowlist decides who gets in; the
      * password stays as the way in when the provider is down.
      */
-    oidc?: { issuer: string; clientId: string; clientSecret: pulumi.Input<string> };
+    oidc?: {
+      issuer: string;
+      clientId: string;
+      clientSecret: pulumi.Input<string>;
+      /**
+       * The provider's public API inside the cluster, for the token exchange.
+       * Needed when the pod shares a node with the ingress: Cilium matches no
+       * CIDR rule against the node's own addresses, so a call out to the
+       * issuer's public hostname is dropped.
+       */
+      backchannel?: { url: string; podLabels: Record<string, string>; port: number };
+    };
     limits?: { cpu: string; memory: string };
     requests?: { cpu: string; memory: string };
     nodeSelector?: Record<string, string>;
@@ -124,6 +135,9 @@ export function createTransmet(
                         { name: "PUBLIC_URL", value: `https://${opts.hostname}` },
                         { name: "OIDC_ISSUER", value: opts.oidc.issuer },
                         { name: "OIDC_CLIENT_ID", value: opts.oidc.clientId },
+                        ...(opts.oidc.backchannel
+                          ? [{ name: "OIDC_TOKEN_URL", value: `${opts.oidc.backchannel.url}/oauth2/token` }]
+                          : []),
                         {
                           name: "OIDC_CLIENT_SECRET",
                           valueFrom: {
@@ -168,7 +182,8 @@ export function createTransmet(
   );
 
   // It serves files, so without sign-on it reaches nothing. With it, the only
-  // call out is to the issuer's token endpoint, which is public. No ingress
+  // call out is to the issuer's token endpoint: the provider's pods when a
+  // backchannel is given, otherwise anywhere public. No ingress
   // rule: Traefik reaches it, and an ingress policy that also drops the
   // kubelet's probes gets the pod killed for failing readiness.
   new k8s.networking.v1.NetworkPolicy(
@@ -193,10 +208,15 @@ export function createTransmet(
                   { protocol: "TCP", port: 53 },
                 ],
               },
-              {
-                to: [{ ipBlock: { cidr: "0.0.0.0/0", except: PRIVATE } }],
-                ports: [{ protocol: "TCP", port: 443 }],
-              },
+              opts.oidc.backchannel
+                ? {
+                    to: [{ podSelector: { matchLabels: opts.oidc.backchannel.podLabels } }],
+                    ports: [{ protocol: "TCP", port: opts.oidc.backchannel.port }],
+                  }
+                : {
+                    to: [{ ipBlock: { cidr: "0.0.0.0/0", except: PRIVATE } }],
+                    ports: [{ protocol: "TCP", port: 443 }],
+                  },
             ]
           : [],
       },
