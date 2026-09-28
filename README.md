@@ -1,7 +1,8 @@
 # transmet
 
-A mobile-first reader for a personal copy of *Transmetropolitan*, served at a
-single password from the jaritanet cluster.
+A mobile-first reader for a personal copy of *Transmetropolitan*, served from
+the jaritanet cluster behind the estate's single sign-on, with a shared password
+as the fallback.
 
 ## Layout
 
@@ -12,9 +13,11 @@ single password from the jaritanet cluster.
 - `scripts/push-pages` publishes `pages/` as `ghcr.io/radiosilence/transmet-pages`,
   a data-only image. CI has no access to the source, so the pages are pushed
   once from a machine that has them and the app image copies from that.
-- `server/server.ts` is the password gate and static server. The session cookie
-  is an HMAC keyed by the password, so there is no session store and changing
-  the password signs every device out.
+- `server/server.ts` is the sign-in gate and static server. Sign-on goes through
+  the estate's Hydra, whose GitHub allowlist is what decides who reads; the
+  password works without it, so an outage at the provider locks nobody out.
+  Either way in sets the same cookie, an HMAC keyed by the password, so there is
+  no session store and changing the password signs every device out.
 - `web/` is the reader. Pages are served by PhotoSwipe, which handles pinch,
   pan and double-tap zoom. A service worker keeps pages in the Cache API: the
   open issue and the next few (configurable) are saved automatically, and any

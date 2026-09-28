@@ -50,7 +50,7 @@ self.addEventListener("fetch", (e) => {
   if (url.hostname.endsWith("fonts.googleapis.com") || url.hostname.endsWith("fonts.gstatic.com")) {
     return e.respondWith(cacheFirst(req, FONTS));
   }
-  if (url.origin !== self.location.origin || url.pathname === "/login") return;
+  if (url.origin !== self.location.origin || url.pathname === "/login" || url.pathname.startsWith("/auth/")) return;
 
   if (url.pathname === "/pages/manifest.json") return e.respondWith(networkFirst(req));
   if (url.pathname.startsWith("/pages/")) return e.respondWith(pages(req));

@@ -8,15 +8,22 @@ import { IMAGE } from "./versions.ts";
  */
 export type Route = { service: string; hostname: string };
 
-export type Deployed = { routes: Route[] };
+/** The OAuth client the provider must register for this deployment. */
+export type OidcClient = { id: string; name: string; redirectUri: string };
+
+export type Deployed = { routes: Route[]; oidc?: OidcClient };
+
+/** Egress to these would reach the house or the cluster rather than the issuer. */
+const PRIVATE = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"];
 
 /**
  * The reader and every page of the comic, in one private image.
  *
  * The pages are baked in rather than mounted, so the pod has no node to be
  * pinned to and nothing to fetch at runtime. That makes the image the thing to
- * protect: it is pulled with a registry credential, and the site itself sits
- * behind a password.
+ * protect: it is pulled with a registry credential, and the site itself needs a
+ * sign-in, through the OIDC provider when `oidc` is given and by password
+ * always.
  */
 export function createTransmet(
   provider: k8s.Provider,
@@ -27,6 +34,11 @@ export function createTransmet(
     password: pulumi.Input<string>;
     /** Read access to ghcr.io, since the image holds the comic itself. */
     registry: { username: pulumi.Input<string>; token: pulumi.Input<string> };
+    /**
+     * Single sign-on. The provider's own allowlist decides who gets in; the
+     * password stays as the way in when the provider is down.
+     */
+    oidc?: { issuer: string; clientId: string; clientSecret: pulumi.Input<string> };
     limits?: { cpu: string; memory: string };
     requests?: { cpu: string; memory: string };
     nodeSelector?: Record<string, string>;
@@ -39,7 +51,10 @@ export function createTransmet(
     "transmet",
     {
       metadata: { name: "transmet", namespace },
-      stringData: { password: opts.password },
+      stringData: {
+        password: opts.password,
+        ...(opts.oidc && { "oidc-client-secret": opts.oidc.clientSecret }),
+      },
     },
     options,
   );
@@ -76,12 +91,12 @@ export function createTransmet(
         template: {
           metadata: {
             labels,
-            // Restarts the pod when the password changes, which a Secret
+            // Restarts the pod when a secret changes, which a Secret
             // referenced by env would otherwise leave stale until it next rolls.
             annotations: {
-              "transmet.radiosilence.dev/password": pulumi
-                .output(opts.password)
-                .apply((p) => hash(p)),
+              "transmet.radiosilence.dev/secrets": pulumi
+                .all([opts.password, opts.oidc?.clientSecret ?? ""])
+                .apply((values) => hash(values.join("\0"))),
             },
           },
           spec: {
@@ -104,6 +119,19 @@ export function createTransmet(
                     name: "TRANSMET_PASSWORD",
                     valueFrom: { secretKeyRef: { name: secret.metadata.name, key: "password" } },
                   },
+                  ...(opts.oidc
+                    ? [
+                        { name: "PUBLIC_URL", value: `https://${opts.hostname}` },
+                        { name: "OIDC_ISSUER", value: opts.oidc.issuer },
+                        { name: "OIDC_CLIENT_ID", value: opts.oidc.clientId },
+                        {
+                          name: "OIDC_CLIENT_SECRET",
+                          valueFrom: {
+                            secretKeyRef: { name: secret.metadata.name, key: "oidc-client-secret" },
+                          },
+                        },
+                      ]
+                    : []),
                 ],
                 readinessProbe: { httpGet: { path: "/_health", port: "http" }, periodSeconds: 10 },
                 livenessProbe: {
@@ -139,19 +167,51 @@ export function createTransmet(
     options,
   );
 
-  // It serves files and reaches nothing, so all egress is denied. No ingress
+  // It serves files, so without sign-on it reaches nothing. With it, the only
+  // call out is to the issuer's token endpoint, which is public. No ingress
   // rule: Traefik reaches it, and an ingress policy that also drops the
   // kubelet's probes gets the pod killed for failing readiness.
   new k8s.networking.v1.NetworkPolicy(
     "transmet-netpol",
     {
       metadata: { name: "transmet", namespace },
-      spec: { podSelector: { matchLabels: labels }, policyTypes: ["Egress"], egress: [] },
+      spec: {
+        podSelector: { matchLabels: labels },
+        policyTypes: ["Egress"],
+        egress: opts.oidc
+          ? [
+              {
+                to: [
+                  {
+                    namespaceSelector: {
+                      matchLabels: { "kubernetes.io/metadata.name": "kube-system" },
+                    },
+                  },
+                ],
+                ports: [
+                  { protocol: "UDP", port: 53 },
+                  { protocol: "TCP", port: 53 },
+                ],
+              },
+              {
+                to: [{ ipBlock: { cidr: "0.0.0.0/0", except: PRIVATE } }],
+                ports: [{ protocol: "TCP", port: 443 }],
+              },
+            ]
+          : [],
+      },
     },
     options,
   );
 
-  return { routes: [{ service: "transmet", hostname: opts.hostname }] } satisfies Deployed;
+  return {
+    routes: [{ service: "transmet", hostname: opts.hostname }],
+    oidc: opts.oidc && {
+      id: opts.oidc.clientId,
+      name: "Transmet",
+      redirectUri: `https://${opts.hostname}/auth/callback`,
+    },
+  } satisfies Deployed;
 }
 
 function hash(value: string) {

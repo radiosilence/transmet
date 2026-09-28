@@ -1,16 +1,35 @@
 /**
- * Serves the reader and its pages behind a single shared password.
+ * Serves the reader and its pages to a signed-in browser.
+ *
+ * There are two ways in, and both end in the same cookie: single sign-on
+ * through the estate's OIDC provider, when one is configured, and a shared
+ * password that works whether or not the provider is up. The provider admits
+ * only the GitHub logins on its own allowlist, so any subject it issues a token
+ * for is someone allowed to read.
  *
  * The session is a cookie holding an HMAC of a fixed label keyed by the
  * password, so there is no session store, every replica agrees, and rotating
  * the password signs everyone out. It is long-lived because the service worker
  * refetches pages in the background, where no login form can be shown.
  */
-import { timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { join, normalize, sep } from "node:path";
 
-const password = process.env.TRANSMET_PASSWORD;
-if (!password) throw new Error("TRANSMET_PASSWORD is required");
+function env(name: string) {
+  const value = process.env[name];
+  if (!value) throw new Error(`${name} is required`);
+  return value;
+}
+
+const password = env("TRANSMET_PASSWORD");
+const oidc = process.env.OIDC_ISSUER
+  ? {
+      issuer: process.env.OIDC_ISSUER,
+      clientId: env("OIDC_CLIENT_ID"),
+      clientSecret: env("OIDC_CLIENT_SECRET"),
+      redirectUri: `${env("PUBLIC_URL")}/auth/callback`,
+    }
+  : undefined;
 
 const port = Number(process.env.PORT ?? 3000);
 const webDir = process.env.WEB_DIR ?? "/app/web";
@@ -21,11 +40,21 @@ const MAX_AGE = 400 * 24 * 60 * 60;
 const token = new Bun.CryptoHasher("sha256", password)
   .update("transmet-session-v1")
   .digest("hex");
+const SESSION = `${COOKIE}=${token}; Path=/; Max-Age=${MAX_AGE}; HttpOnly; Secure; SameSite=Lax`;
+
+/**
+ * The state and PKCE verifier of a sign-in in flight. Lax, because the
+ * provider's redirect back is a cross-site top-level navigation.
+ */
+const FLOW = "transmet-flow";
+const FLOW_ATTRS = "Path=/auth; HttpOnly; Secure; SameSite=Lax";
 
 /** Paths a browser fetches for the home-screen icon before anyone logs in. */
 const PUBLIC = new Set([
   "/_health",
   "/login",
+  "/auth/login",
+  "/auth/callback",
   "/app.webmanifest",
   "/icon.svg",
   "/icon-192.png",
@@ -36,12 +65,20 @@ const PUBLIC = new Set([
 const IMMUTABLE = "private, max-age=31536000, immutable";
 const REVALIDATE = "no-cache";
 
-function authed(req: Request) {
-  const cookie = req.headers.get("cookie") ?? "";
-  const value = cookie
+const ERRORS: Record<string, string> = {
+  "1": "Wrong. Try again.",
+  sso: "GitHub sign-in failed.",
+};
+
+function cookie(req: Request, name: string) {
+  return (req.headers.get("cookie") ?? "")
     .split(/;\s*/)
-    .find((c) => c.startsWith(`${COOKIE}=`))
-    ?.slice(COOKIE.length + 1);
+    .find((c) => c.startsWith(`${name}=`))
+    ?.slice(name.length + 1);
+}
+
+function authed(req: Request) {
+  const value = cookie(req, COOKIE);
   if (!value || value.length !== token.length) return false;
   return timingSafeEqual(Buffer.from(value), Buffer.from(token));
 }
@@ -59,10 +96,56 @@ async function file(path: string | null, cacheControl: string) {
   return new Response(f, { headers: { "cache-control": cacheControl } });
 }
 
-function loginPage(failed: boolean) {
-  return new Response(LOGIN_HTML.replace("{{error}}", failed ? "Wrong. Try again." : ""), {
+function loginPage(error: string | null) {
+  const html = LOGIN_HTML.replace("{{error}}", (error && ERRORS[error]) ?? "")
+    .replace("{{sso}}", oidc ? SSO_HTML : "")
+    // A focused field raises the phone keyboard over the button most visits use.
+    .replace("{{autofocus}}", oidc ? "" : "autofocus");
+  return new Response(html, {
     headers: { "content-type": "text/html; charset=utf-8", "cache-control": REVALIDATE },
   });
+}
+
+function redirect(location: string, cookies: string[] = []) {
+  return new Response(null, {
+    status: 303,
+    headers: [["location", location], ...cookies.map((c) => ["set-cookie", c] as [string, string])],
+  });
+}
+
+/**
+ * Exchanges the code for the subject it was issued to, or null.
+ *
+ * The id_token comes straight back from the issuer over TLS in answer to a
+ * request made here, so there is no untrusted party for a signature check to
+ * catch. Only the subject is read; nothing is kept.
+ */
+async function exchange(code: string, verifier: string) {
+  if (!oidc) return null;
+  const res = await fetch(`${oidc.issuer}/oauth2/token`, {
+    method: "POST",
+    body: new URLSearchParams({
+      grant_type: "authorization_code",
+      code,
+      redirect_uri: oidc.redirectUri,
+      client_id: oidc.clientId,
+      client_secret: oidc.clientSecret,
+      code_verifier: verifier,
+    }),
+  }).catch((e: unknown) => {
+    console.warn(`token endpoint unreachable: ${e}`);
+    return null;
+  });
+  // The body is never logged: it can carry token material.
+  if (!res?.ok) {
+    if (res) console.warn(`token endpoint returned ${res.status}`);
+    return null;
+  }
+  const { id_token } = (await res.json()) as { id_token?: string };
+  const payload = id_token?.split(".")[1];
+  if (!payload) return null;
+  const { sub } = JSON.parse(Buffer.from(payload, "base64url").toString()) as { sub?: string };
+  return sub || null;
 }
 
 Bun.serve({
@@ -82,24 +165,45 @@ Bun.serve({
           timingSafeEqual(Buffer.from(given), Buffer.from(password));
         if (!ok) {
           await Bun.sleep(1000);
-          return Response.redirect("/login?e=1", 303);
+          return redirect("/login?e=1");
         }
-        return new Response(null, {
-          status: 303,
-          headers: {
-            location: "/",
-            "set-cookie": `${COOKIE}=${token}; Path=/; Max-Age=${MAX_AGE}; HttpOnly; Secure; SameSite=Lax`,
-          },
-        });
+        return redirect("/", [SESSION]);
       }
-      return loginPage(url.searchParams.has("e"));
+      return loginPage(url.searchParams.get("e"));
+    }
+
+    if (path.startsWith("/auth/") && !oidc) return redirect("/login");
+
+    if (path === "/auth/login" && oidc) {
+      const state = randomBytes(32).toString("base64url");
+      const verifier = randomBytes(32).toString("base64url");
+      const authorize = new URL(`${oidc.issuer}/oauth2/auth`);
+      authorize.search = new URLSearchParams({
+        client_id: oidc.clientId,
+        redirect_uri: oidc.redirectUri,
+        response_type: "code",
+        scope: "openid",
+        state,
+        code_challenge: createHash("sha256").update(verifier).digest("base64url"),
+        code_challenge_method: "S256",
+      }).toString();
+      return redirect(authorize.href, [`${FLOW}=${state}.${verifier}; Max-Age=600; ${FLOW_ATTRS}`]);
+    }
+
+    if (path === "/auth/callback" && oidc) {
+      const [state, verifier] = (cookie(req, FLOW) ?? "").split(".");
+      const code = url.searchParams.get("code");
+      const sub =
+        state && verifier && code && url.searchParams.get("state") === state
+          ? await exchange(code, verifier)
+          : null;
+      const clear = `${FLOW}=; Max-Age=0; ${FLOW_ATTRS}`;
+      return sub ? redirect("/", [clear, SESSION]) : redirect("/login?e=sso", [clear]);
     }
 
     if (!PUBLIC.has(path) && !authed(req)) {
       const navigating = req.headers.get("sec-fetch-mode") === "navigate";
-      return navigating
-        ? Response.redirect("/login", 303)
-        : new Response("unauthorised", { status: 401 });
+      return navigating ? redirect("/login") : new Response("unauthorised", { status: 401 });
     }
 
     if (path.startsWith("/pages/")) {
@@ -119,7 +223,10 @@ Bun.serve({
   },
 });
 
-console.log(`transmet listening on :${port}`);
+console.log(`transmet listening on :${port}${oidc ? `, signing in through ${oidc.issuer}` : ""}`);
+
+const SSO_HTML = `<a class="sso" href="/auth/login">Sign in with GitHub</a>
+  <p class="or">or</p>`;
 
 const LOGIN_HTML = `<!doctype html>
 <html lang="en">
@@ -153,13 +260,19 @@ const LOGIN_HTML = `<!doctype html>
   input:focus { outline: 2px solid var(--acid); outline-offset: 1px; }
   button { background: var(--acid); color: var(--ink); border: 0; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; }
   .err { color: var(--hot); min-height: 1.4em; font-size: 14px; }
+  .sso {
+    display: block; text-align: center; text-decoration: none; border-radius: 12px; padding: 15px 16px;
+    background: var(--acid); color: var(--ink); font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase;
+  }
+  .or { text-align: center; }
 </style>
 </head>
 <body>
 <form method="post" action="/login">
   <h1>Trans<br><span>met</span></h1>
   <p>The city is waiting.</p>
-  <input type="password" name="password" placeholder="Password" autocomplete="current-password" autofocus required>
+  {{sso}}
+  <input type="password" name="password" placeholder="Password" autocomplete="current-password" {{autofocus}} required>
   <button type="submit">Enter</button>
   <div class="err">{{error}}</div>
 </form>
