@@ -1,6 +1,6 @@
 import PhotoSwipe, { type SlideData } from "photoswipe";
 import { useEffect, useRef, useState } from "react";
-import { arcOf, label, pageUrl, type Issue } from "./catalogue";
+import { arcOf, label, loadWords, pageUrl, pageWords, type Issue, type Words } from "./catalogue";
 import { forget, keepAhead, save } from "./offline";
 import { navigate } from "./router";
 import { useDownloads, useShelf } from "./store";
@@ -14,12 +14,14 @@ export function Reader({ issue, issues }: { issue: Issue; issues: Issue[] }) {
   const pswp = useRef<PhotoSwipe | null>(null);
   const [index, setIndex] = useState(() => initialPage(issue));
   const [chrome, setChrome] = useState(true);
+  const [words, setWords] = useState<{ id: string; pages: Words }>();
 
   const saved = useShelf((s) => s.saved[issue.id]);
   const downloading = useDownloads((s) => s[issue.id]);
   const next = issues[issues.indexOf(issue) + 1];
   const total = issue.pages.length;
   const atEnd = index >= total;
+  const said = words?.id === issue.id && !atEnd ? pageWords(index, words.pages[index]) : undefined;
 
   // PhotoSwipe is an imperative widget living outside React; this mounts it
   // for the issue and tears it down when the issue changes.
@@ -28,12 +30,12 @@ export function Reader({ issue, issues }: { issue: Issue; issues: Issue[] }) {
     const thumb = document.querySelector<HTMLElement>(`[data-cover="${issue.id}"] img`);
     let closing = false;
 
-    const slides: SlideData[] = issue.pages.map((p) => ({
+    const slides: SlideData[] = issue.pages.map((p, i) => ({
       src: pageUrl(p.src),
       msrc: pageUrl(p.thumb),
       width: p.w,
       height: p.h,
-      alt: `Page ${p.src}`,
+      alt: `Page ${i + 1}`,
     }));
     slides.push({ html: endSlide(issue, next) });
 
@@ -74,6 +76,16 @@ export function Reader({ issue, issues }: { issue: Issue; issues: Issue[] }) {
       },
     });
 
+    // The transcript arrives after the viewer opens; slides built from then on
+    // carry it as alt text, and the live region covers the one already showing.
+    let loaded: Words | undefined;
+    void loadWords(issue.id).then((pages) => {
+      loaded = pages;
+      setWords({ id: issue.id, pages });
+    });
+    lightbox.addFilter("itemData", (data, i) =>
+      loaded?.[i] && i < total ? { ...data, alt: pageWords(i, loaded[i]) } : data,
+    );
     lightbox.addFilter("thumbEl", (el, _data, i) => (i === 0 && thumb ? thumb : el) as HTMLElement);
     lightbox.addFilter("placeholderSrc", (src, content) => content.data.msrc ?? src);
     lightbox.on("change", () => {
@@ -126,6 +138,10 @@ export function Reader({ issue, issues }: { issue: Issue; issues: Issue[] }) {
           {downloading !== undefined ? `${Math.round(downloading * 100)}%` : saved ? "Saved" : "Save"}
         </button>
       </div>
+
+      <p className="sr-only" aria-live="polite">
+        {said}
+      </p>
 
       <div className="bar bottom">
         <div className="count">{atEnd ? "The end" : `${index + 1} / ${total}`}</div>

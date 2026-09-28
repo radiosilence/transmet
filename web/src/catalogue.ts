@@ -37,3 +37,28 @@ export function label(issue: Issue) {
 }
 
 export const pageUrl = (p: string) => `/pages/${p}`;
+
+/**
+ * What a screen reader is told about each page: the lettering, transcribed by
+ * scripts/ocr.py, and where scripts/describe.py has run, what the page shows.
+ */
+export type Words = { text: string[]; scene?: string }[];
+
+async function json<T>(url: string) {
+  const res = await fetch(url).catch(() => null);
+  return res?.ok ? ((await res.json()) as T) : undefined;
+}
+
+export async function loadWords(id: string): Promise<Words> {
+  const [text, scene] = await Promise.all([
+    json<string[][]>(pageUrl(`${id}/text.json`)),
+    json<string[]>(pageUrl(`${id}/scene.json`)),
+  ]);
+  return (text ?? []).map((t, i) => ({ text: t, scene: scene?.[i] }));
+}
+
+export function pageWords(i: number, page: Words[number] | undefined) {
+  if (!page) return `Page ${i + 1}.`;
+  const lettering = page.text.length ? page.text.map((t) => `“${t}”`).join(" ") : "No lettering.";
+  return [`Page ${i + 1}.`, page.scene, lettering].filter(Boolean).join(" ");
+}
