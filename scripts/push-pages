@@ -8,7 +8,9 @@ cd "$(dirname "$0")/.."
 
 repo=ghcr.io/radiosilence/transmet-pages
 tag=${1:-1}
-tarball=$(mktemp -t transmet-pages).tar
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+tarball=$work/pages.tar
 
 gh auth token | crane auth login ghcr.io -u "$(gh api user -q .login)" --password-stdin
 COPYFILE_DISABLE=1 tar --no-xattrs --uid 0 --gid 0 -cf "$tarball" pages
@@ -24,4 +26,3 @@ for arch in amd64 arm64; do
     -t "$repo:$tag-$arch"
 done
 crane index append -m "$repo:$tag-amd64" -m "$repo:$tag-arm64" -t "$repo:$tag"
-rm -f "$tarball"
