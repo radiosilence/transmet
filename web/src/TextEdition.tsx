@@ -18,11 +18,17 @@ export function TextEdition({ issue }: { issue: Issue }) {
         <section key={i} aria-labelledby={`page-${i + 1}`}>
           <h2 id={`page-${i + 1}`}>Page {i + 1}</h2>
           {page.scene && <p>{page.scene}</p>}
-          {page.text.map((line, j) => (
-            <p key={j} className="said">
-              “{line}”
-            </p>
-          ))}
+          {page.lines
+            ? page.lines.map((line, j) => (
+                <p key={j} className="said">
+                  <strong>{line.who}:</strong> “{line.text}”
+                </p>
+              ))
+            : page.text.map((line, j) => (
+                <p key={j} className="said">
+                  “{line}”
+                </p>
+              ))}
         </section>
       ))}
     </main>

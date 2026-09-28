@@ -40,10 +40,12 @@ export const pageUrl = (p: string) => `/pages/${p}`;
 
 /**
  * What a screen reader is told about each page: the lettering, transcribed by
- * scripts/ocr.py, and where scripts/describe.py has run, what the page shows.
- * Together they are the issue's text edition.
+ * scripts/ocr.py, and where scripts/describe.py has run, what the page shows
+ * and the same lettering corrected and attributed to its speakers. Together
+ * they are the issue's text edition.
  */
-export type Words = { text: string[]; scene?: string }[];
+export type Line = { who: string; text: string };
+export type Words = { text: string[]; scene?: string; lines?: Line[] }[];
 
 async function json<T>(url: string) {
   const res = await fetch(url).catch(() => null);
@@ -53,9 +55,9 @@ async function json<T>(url: string) {
 async function loadWords(id: string): Promise<Words> {
   const [text, scene] = await Promise.all([
     json<string[][]>(pageUrl(`${id}/text.json`)),
-    json<{ pages: string[] }>(pageUrl(`${id}/scene.json`)),
+    json<{ pages: { scene: string; lines: Line[] }[] }>(pageUrl(`${id}/scene.json`)),
   ]);
-  return (text ?? []).map((t, i) => ({ text: t, scene: scene?.pages[i] }));
+  return (text ?? []).map((t, i) => ({ text: t, ...scene?.pages[i] }));
 }
 
 const words = new Map<string, Promise<Words>>();
@@ -69,6 +71,8 @@ export function wordsFor(id: string) {
 
 export function pageWords(i: number, page: Words[number] | undefined) {
   if (!page) return `Page ${i + 1}.`;
-  const lettering = page.text.length ? page.text.map((t) => `“${t}”`).join(" ") : "No lettering.";
-  return [`Page ${i + 1}.`, page.scene, lettering].filter(Boolean).join(" ");
+  const lettering = page.lines
+    ? page.lines.map((l) => `${l.who}: “${l.text}”`).join(" ")
+    : page.text.map((t) => `“${t}”`).join(" ");
+  return [`Page ${i + 1}.`, page.scene, lettering || "No lettering."].filter(Boolean).join(" ");
 }

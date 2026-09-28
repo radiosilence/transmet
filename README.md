@@ -28,8 +28,11 @@ as the fallback.
   as alt text and announces on each page turn. Sound effects and display
   lettering are dropped because they read aloud as noise; reading order is by
   position, so it is approximate on complex layouts.
-- `scripts/describe.py` writes what each page shows into `<issue>/scene.json`,
-  using Claude Haiku through the `claude` CLI. Pages go a dozen at a time with
+- `scripts/describe.py` writes what each page shows, and its lettering
+  corrected and attributed to speakers, into `<issue>/scene.json`, using Claude
+  Sonnet through the `claude` CLI. Haiku was tried first and misidentified who
+  is drawn: it took a narrated subject for the person in the panel and a
+  talking bulldog for a man. Pages go a dozen at a time with
   their transcript, a character guide and a running story summary carried
   across issues, so descriptions keep track of who is who. With the transcript
   it makes each issue's text edition at `/text/<issue>`, readable straight
