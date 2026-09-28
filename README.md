@@ -8,6 +8,8 @@ The password is `transmetropolitan`
 
 Please fucking read this.
 
+Also if you are Warren Ellis or their publisher or something, have a chat and a beer if you want me to not have this online. I figured it's been 20 years and the content you've made is more important than some latent bit of money you will make, but not my call <3
+
 ## Layout
 
 - `scripts/extract.py` pulls every page out of the source PDFs as the original
