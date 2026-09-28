@@ -60,7 +60,8 @@ Keep continuity with the story so far.
 Spider Jerusalem is a foul-mouthed gonzo journalist: bearded and hermit-like
 at the very start of issue 1, afterwards shaven-headed and tattooed, in
 mismatched tinted glasses. Channon Yarrow and Yelena Rossini are his "filthy
-assistants". Mitchell Royce is his editor at The Word. Spider's cat smokes
+assistants": Channon has long dark hair, Yelena is blonde, and both take to
+wearing tinted glasses like his. Tell them apart by hair, not by role. Mitchell Royce is his editor at The Word. Spider's cat smokes
 black cigarettes. The Beast is the President; Gary Callahan, "The Smiler",
 runs against him."""
 
@@ -89,7 +90,7 @@ def describe(issue, pages, text, first, story):
 
     # Run outside any project so no CLAUDE.md or settings reach the prompt.
     with tempfile.TemporaryDirectory() as cwd:
-        for _ in range(3):
+        for _ in range(5):
             out = subprocess.run(
                 ["claude", "-p", "--verbose", "--model", MODEL, "--tools", "", "--setting-sources", "",
                  "--no-session-persistence", "--input-format", "stream-json", "--output-format", "stream-json",
@@ -103,9 +104,10 @@ def describe(issue, pages, text, first, story):
                 reply = json.loads(re.search(r"\{.*\}", result["result"], re.S)[0])
                 if len(reply["pages"]) == len(pages):
                     return reply["pages"], reply["story"]
-            except (TypeError, KeyError, json.JSONDecodeError):
-                pass
-            print(f"  retrying {issue} from page {first}", flush=True)
+                why = f"{len(reply['pages'])} pages for {len(pages)}"
+            except (TypeError, KeyError, json.JSONDecodeError) as e:
+                why = f"unreadable reply ({type(e).__name__})"
+            print(f"  retrying {issue} from page {first}: {why}", flush=True)
     sys.exit(f"gave up on {issue} from page {first}")
 
 
