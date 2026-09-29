@@ -321,6 +321,19 @@ button {
   transform-origin: bottom;
 }
 
+/* A whole arc fits on a wide screen, so the covers share the row rather than
+   leaving a last cover clipped by a few pixels with nothing to scroll to. */
+@media (min-width: 900px) {
+  .rack .cover {
+    flex: 1 1 0;
+    max-width: 168px;
+  }
+
+  .nudge {
+    display: none !important;
+  }
+}
+
 .ledge {
   height: 22px;
   margin-top: -2px;
