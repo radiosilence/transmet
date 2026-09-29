@@ -10,7 +10,7 @@ RUN bun run build
 # The comic itself, pushed once from a machine holding the source by
 # scripts/push-pages. First, because it is 2.5GB and never changes, so a code
 # change ships only the layers above it.
-FROM ghcr.io/radiosilence/transmet-pages:2 AS pages
+FROM ghcr.io/radiosilence/transmet-pages:3 AS pages
 
 FROM oven/bun:1-distroless
 COPY --from=pages /pages /pages

@@ -50,7 +50,8 @@ readers. For each page, give:
   panel; describe who is actually drawn. Do not repeat the dialogue. An
   advertisement or back matter gets one sentence.
 - lines: the lettering in reading order, each attributed by following the
-  balloon's tail: the character's name, a short description ("the bulldog",
+  balloon's tail: the character's first name ("Spider", "Channon"), a short
+  description ("the bulldog",
   "a cop") when unnamed, or "Caption" for narration boxes. The lettering is
   all capitals and was read by OCR: fix misreadings and give it normal
   capitalisation, restoring proper nouns. Leave out sound effects, credits
@@ -64,6 +65,27 @@ assistants": Channon has long dark hair, Yelena is blonde, and both take to
 wearing tinted glasses like his. Tell them apart by hair, not by role. Mitchell Royce is his editor at The Word. Spider's cat smokes
 black cigarettes. The Beast is the President; Gary Callahan, "The Smiler",
 runs against him."""
+
+
+# The model sometimes gives a full name and sometimes not, and a screen reader
+# reads out whichever it got. One name per character reads as one person.
+NAMES = {
+    "Spider Jerusalem": "Spider",
+    "Channon Yarrow": "Channon",
+    "Yelena Rossini": "Yelena",
+    "Mitchell Royce": "Royce",
+    "The dark-haired assistant": "Channon",
+    "Dark-haired assistant": "Channon",
+}
+
+
+def normalise(pages):
+    for page in pages:
+        for line in page["lines"]:
+            for full, short in NAMES.items():
+                if line["who"].startswith(full):
+                    line["who"] = short + line["who"][len(full):]
+    return pages
 
 
 def page_blocks(path):
@@ -130,5 +152,5 @@ if __name__ == "__main__":
         for at in range(0, len(paths), CHUNK):
             described, story = describe(name, paths[at : at + CHUNK], text[at : at + CHUNK], at + 1, story)
             scenes += described
-        out.write_text(json.dumps({"pages": scenes, "story": story}, ensure_ascii=False, separators=(",", ":")))
+        out.write_text(json.dumps({"pages": normalise(scenes), "story": story}, ensure_ascii=False, separators=(",", ":")))
         print(f"{issue['id']}: described {len(scenes)} pages", flush=True)

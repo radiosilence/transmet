@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.3
+
+- Each character is named the same way throughout the transcripts ("Spider",
+  not sometimes "Spider Jerusalem"), so a screen reader presents one person.
+  Requires `transmet-pages:3`.
+
 ## 0.3.2
 
 - Sign-on failed with a Bad Gateway when the pod shared a node with the
