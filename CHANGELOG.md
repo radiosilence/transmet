@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.4
+
+- On wide screens a whole arc fits on its shelf, and the arrows are hidden;
+  six covers overflowed by a few pixels, so the arrows scrolled by that much and
+  appeared to do nothing.
+- Corrects the description of #55 page 16, which swapped Channon and Yelena.
+  Requires `transmet-pages:4`.
+
 ## 0.3.3
 
 - Each character is named the same way throughout the transcripts ("Spider",
