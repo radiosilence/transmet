@@ -61,8 +61,9 @@ Keep continuity with the story so far.
 Spider Jerusalem is a foul-mouthed gonzo journalist: bearded and hermit-like
 at the very start of issue 1, afterwards shaven-headed and tattooed, in
 mismatched tinted glasses. Channon Yarrow and Yelena Rossini are his "filthy
-assistants": Channon has long dark hair, Yelena is blonde, and both take to
-wearing tinted glasses like his. Tell them apart by hair, not by role. Mitchell Royce is his editor at The Word. Spider's cat smokes
+assistants". Channon comes first; Yelena joins in Year of the Bastard, while
+Channon is away, and from then on both work for him. Channon's hair changes over
+the series, so do not tell them apart by hair colour alone. Mitchell Royce is his editor at The Word. Spider's cat smokes
 black cigarettes. The Beast is the President; Gary Callahan, "The Smiler",
 runs against him."""
 
