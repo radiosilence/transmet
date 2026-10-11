@@ -8,12 +8,10 @@ const open = (issue: Issue, page = 0) => navigate(`/read/${issue.id}?p=${page}`)
 
 export function Shop({ issues }: { issues: Issue[] }) {
   const last = useShelf((s) => s.last);
-  const progress = useShelf((s) => s.progress);
-
   const current = issues.find((i) => i.id === last) ?? issues[0]!;
-  const finished = progress[current.id]?.done;
+  const finished = useShelf((s) => s.progress[current.id]?.done);
   const pick = finished ? (issues[issues.indexOf(current) + 1] ?? current) : current;
-  const at = progress[pick.id];
+  const at = useShelf((s) => s.progress[pick.id]);
 
   return (
     <main className="shop">
