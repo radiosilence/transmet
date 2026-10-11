@@ -84,6 +84,7 @@ button {
 
 .neon .flicker {
   animation: flicker 7s infinite 2s;
+  will-change: opacity;
 }
 
 .hours {
@@ -102,9 +103,10 @@ button {
   100% { opacity: 1; }
 }
 
+/* Opacity alone, on its own layer, so the flicker never repaints the glow. */
 @keyframes flicker {
   0%, 91%, 93%, 96%, 100% { opacity: 1; }
-  92%, 95% { opacity: 0.35; text-shadow: 0 0 4px var(--hot); }
+  92%, 95% { opacity: 0.35; }
 }
 
 /* ---------- The counter display ---------- */
@@ -439,7 +441,6 @@ button {
   font: 400 26px/1.1 var(--display);
   letter-spacing: 0.12em;
   background: rgb(11 10 9 / 0.35);
-  mix-blend-mode: screen;
   opacity: 0.9;
 }
 
@@ -549,6 +550,17 @@ button {
 
 /* ---------- Reader ---------- */
 
+/* The shop stays mounted under the viewer, so the way back lands where it was
+   left. While the viewer is open the document behind it neither scrolls nor
+   animates: a scroll there resizes the viewer mid-gesture on iOS. */
+html:has(.reader) {
+  overflow: hidden;
+}
+
+html:has(.reader) .shop * {
+  animation-play-state: paused;
+}
+
 .reader {
   position: fixed;
   inset: 0;
@@ -573,9 +585,9 @@ button {
   align-items: center;
   gap: 12px;
   padding: 10px 12px;
-  background: rgb(8 8 8 / 0.72);
-  backdrop-filter: blur(18px) saturate(1.4);
-  -webkit-backdrop-filter: blur(18px) saturate(1.4);
+  /* Opaque rather than a backdrop blur: the blur is recomputed every frame
+     the page beneath is dragged or zoomed. */
+  background: rgb(8 8 8 / 0.92);
   transition: transform 0.28s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.2s;
 }
 
@@ -662,6 +674,7 @@ button {
 }
 
 .scrubber {
+  position: relative;
   display: flex;
   gap: 6px;
   padding: 2px 16px;
