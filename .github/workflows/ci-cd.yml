@@ -24,10 +24,11 @@ permissions:
 
 # A pull request's newer push cancels its older run, and so does a newer push
 # to main that releases nothing. A push that changes the chart's package.json
-# may release, so it gets a group of its own and is never cancelled; nor is a
-# manual run, which is how a failed release is retried.
+# may release, and a manual run is how a failed release is retried: both share
+# one group that is never cancelled, so two runs that may release go one at a
+# time and the second sees what the first published.
 concurrency:
-  group: "ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.event_name == 'workflow_dispatch' && format('dispatch-{0}', github.run_id) || contains(github.event.head_commit.modified, 'deploy/pulumi/package.json') && format('release-{0}', github.sha) || 'main' }}"
+  group: "ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || (github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.modified, 'deploy/pulumi/package.json')) && 'release' || 'main' }}"
   cancel-in-progress: "${{ github.event_name == 'pull_request' || (github.event_name == 'push' && !contains(github.event.head_commit.modified, 'deploy/pulumi/package.json')) }}"
 
 jobs:
@@ -76,33 +77,29 @@ jobs:
         # manual run retries a release that never happened.
         run: |
           app=true chart=true release=false
-          version_of() { jq -r .version; }
-          version=$(version_of < deploy/pulumi/package.json)
+          version=$(jq -r .version deploy/pulumi/package.json)
           bumped=false
-          if [ "$(git show "HEAD^1:deploy/pulumi/package.json" 2>/dev/null | version_of)" != "$version" ]; then
+          if [ "$(git show "HEAD^1:deploy/pulumi/package.json" 2>/dev/null | jq -r .version)" != "$version" ]; then
             bumped=true
           fi
-          # The package registry is the record of what is out; a package that
-          # does not exist has published nothing. If it cannot be asked, fail
-          # rather than guess either way.
-          published() {
-            local versions
-            if ! versions=$(gh api "/users/radiosilence/packages/npm/transmet-pulumi/versions" --paginate -q '.[].name' 2>&1); then
-              case "$versions" in *"HTTP 404"*) return 1 ;; esac
-              echo "::error::could not list published versions: $versions"
-              exit 1
-            fi
-            printf '%s\n' "$versions" | grep -qxF "$version"
-          }
           case "$EVENT" in
             pull_request)
               case "$HEAD_REF" in release-v*) bumped=true ;; esac
               release=$bumped
               ;;
             *)
-              if [ "$GITHUB_REF" = refs/heads/main ] && { [ "$EVENT" = workflow_dispatch ] || [ "$bumped" = true ]; } \
-                && ! published; then
-                release=true
+              # The package registry is the record of what is out; a package
+              # that does not exist has published nothing. If it cannot be
+              # asked, fail rather than guess either way.
+              if [ "$GITHUB_REF" = refs/heads/main ] && { [ "$EVENT" = workflow_dispatch ] || [ "$bumped" = true ]; }; then
+                if ! versions=$(gh api "/users/radiosilence/packages/npm/transmet-pulumi/versions" --paginate -q '.[].name' 2>&1); then
+                  if ! grep -q 'HTTP 404' <<< "$versions"; then
+                    echo "::error::could not list published versions: $versions"
+                    exit 1
+                  fi
+                  versions=
+                fi
+                grep -qxF "$version" <<< "$versions" || release=true
               fi
               ;;
           esac
@@ -119,12 +116,13 @@ jobs:
               echo "::notice::no passed run on main within reach -- running everything"
             fi
           fi
-          touches() { printf '%s\n' "$files" | grep -E "$1" | grep -qvE '\.md$'; }
+          # Each grep reads all its input, so no stage of the pipe is cut short.
+          touches() { [ "$(grep -E "$1" <<< "$files" | grep -cvE '\.md$')" -gt 0 ]; }
           if [ "$EVENT" != "workflow_dispatch" ] && [ "$release" = false ] && [ -n "$base" ] && files=$(git diff --name-only "$base" HEAD); then
             echo "changes since $(git rev-parse --short "$base"):"
             printf '%s\n' "$files" | sed 's/^/  /'
             # What the image is built from.
-            touches '^web/|^server/|^Dockerfile$|^\.dockerignore$|^\.github/' || app=false
+            touches '^web/|^server/|^Dockerfile$|^\.github/' || app=false
             touches '^deploy/|^\.github/' || chart=false
           fi
           {
@@ -139,7 +137,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: changes
-    if: needs.changes.outputs.app == 'true'
+    # Pull requests only: elsewhere `image` builds the same bundle.
+    if: github.event_name == 'pull_request' && needs.changes.outputs.app == 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
