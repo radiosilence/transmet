@@ -38,6 +38,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
+      actions: read
       contents: read
       packages: read
     outputs:
@@ -53,6 +54,7 @@ jobs:
         env:
           EVENT: ${{ github.event_name }}
           HEAD_REF: ${{ github.head_ref }}
+          BEFORE: ${{ github.event.before }}
           GH_TOKEN: ${{ github.token }}
         # The domains a change touches, from its diff. A pull request's is
         # against its base (the merge commit's first parent). A push's is
@@ -66,23 +68,33 @@ jobs:
         #
         # Whether this run releases is the one answer every release job reads,
         # independent of the diff. A pull request: a release PR (branch
-        # `release-*`, or a version change), which runs everything. A push: it
-        # changes the version and that version is not published. A manual run:
-        # the version is not published.
+        # `release-*`, or a version change), which runs everything and
+        # publishes nothing. A push: it changes the version (compared with the
+        # commit before the whole push) and that version is not published. A
+        # manual run on main: the version is not published.
         run: |
           app=true chart=true release=false
           version_of() { jq -r .version; }
           version=$(version_of < deploy/pulumi/package.json)
+          prior=HEAD^1
+          if [ "$EVENT" = push ] && [ -n "$BEFORE" ] && git fetch -q --depth=1 origin "$BEFORE" 2>/dev/null; then
+            prior=$BEFORE
+          fi
           bumped=false
-          if [ "$(git show HEAD^1:deploy/pulumi/package.json 2>/dev/null | version_of)" != "$version" ]; then
+          if [ "$(git show "$prior:deploy/pulumi/package.json" 2>/dev/null | version_of)" != "$version" ]; then
             bumped=true
           fi
-          # The package registry is the record of what is out. If it cannot be
-          # asked, fail rather than guess either way.
+          # The package registry is the record of what is out; a package that
+          # does not exist has published nothing. If it cannot be asked, fail
+          # rather than guess either way.
           published() {
             local versions
-            versions=$(gh api "/users/radiosilence/packages/npm/transmet-pulumi/versions" --paginate -q '.[].name') || exit 1
-            printf '%s\n' "$versions" | grep -qx "$version"
+            if ! versions=$(gh api "/users/radiosilence/packages/npm/transmet-pulumi/versions" --paginate -q '.[].name' 2>&1); then
+              case "$versions" in *"HTTP 404"*) return 1 ;; esac
+              echo "::error::could not list published versions: $versions"
+              exit 1
+            fi
+            printf '%s\n' "$versions" | grep -qxF "$version"
           }
           case "$EVENT" in
             pull_request)
@@ -93,7 +105,7 @@ jobs:
               if [ "$bumped" = true ] && ! published; then release=true; fi
               ;;
             *)
-              if ! published; then release=true; fi
+              if [ "$GITHUB_REF" = refs/heads/main ] && ! published; then release=true; fi
               ;;
           esac
           base=HEAD^1
@@ -125,9 +137,6 @@ jobs:
     timeout-minutes: 15
     needs: changes
     if: needs.changes.outputs.app == 'true'
-    concurrency:
-      group: web-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
-      cancel-in-progress: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
@@ -140,9 +149,6 @@ jobs:
     timeout-minutes: 15
     needs: changes
     if: needs.changes.outputs.chart == 'true'
-    concurrency:
-      group: chart-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
-      cancel-in-progress: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -179,7 +185,16 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+      # A re-run, or a manual run of a commit already built, keeps the image
+      # it has: a rebuild would change its digest under a version tag.
+      - id: existing
+        run: |
+          if docker buildx imagetools inspect "ghcr.io/radiosilence/transmet:sha-$GITHUB_SHA" > /dev/null 2>&1; then
+            echo "::notice::sha-$GITHUB_SHA already exists; not rebuilding"
+            echo "built=true" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.existing.outputs.built != 'true'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           platforms: linux/amd64,linux/arm64
@@ -218,7 +233,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     needs: [changes, image, checks]
-    if: ${{ !cancelled() && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') && !contains(needs.*.result, 'skipped') && needs.checks.result == 'success' && needs.changes.outputs.release == 'true' && github.event_name != 'pull_request' }}
+    if: ${{ !cancelled() && needs.checks.result == 'success' && needs.image.result == 'success' && needs.changes.outputs.release == 'true' && github.event_name != 'pull_request' }}
     permissions:
       contents: read
       packages: write
@@ -232,7 +247,14 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - run: docker buildx imagetools create -t "$IMAGE:$VERSION" "$IMAGE:sha-$GITHUB_SHA"
+      # A version tag, once set, is never moved, so a retried release keeps
+      # the image it first shipped.
+      - run: |
+          if docker buildx imagetools inspect "$IMAGE:$VERSION" > /dev/null 2>&1; then
+            echo "::notice::$IMAGE:$VERSION already exists; leaving it"
+            exit 0
+          fi
+          docker buildx imagetools create -t "$IMAGE:$VERSION" "$IMAGE:sha-$GITHUB_SHA"
 
   # Last, since a published version cannot be replaced and the chart pins the
   # image by that version.
@@ -241,7 +263,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     needs: [changes, chart, checks, image-release]
-    if: ${{ !cancelled() && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') && !contains(needs.*.result, 'skipped') && needs.checks.result == 'success' && needs.image-release.result == 'success' && needs.changes.outputs.release == 'true' && github.event_name != 'pull_request' }}
+    if: ${{ !cancelled() && needs.checks.result == 'success' && needs.chart.result == 'success' && needs.image-release.result == 'success' && needs.changes.outputs.release == 'true' && github.event_name != 'pull_request' }}
     permissions:
       contents: read
       packages: write
