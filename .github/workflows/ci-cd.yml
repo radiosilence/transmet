@@ -54,34 +54,32 @@ jobs:
         env:
           EVENT: ${{ github.event_name }}
           HEAD_REF: ${{ github.head_ref }}
-          BEFORE: ${{ github.event.before }}
           GH_TOKEN: ${{ github.token }}
         # The domains a change touches, from its diff. A pull request's is
         # against its base (the merge commit's first parent). A push's is
         # against the last commit on main whose run passed, so a push whose run
-        # was cancelled by the next one still ships with it; failing that, the
-        # commit before. A manual run, or a diff that cannot be worked out,
-        # runs everything.
+        # was cancelled by the next one still ships with it. If that commit
+        # cannot be found or reached, the push runs everything rather than
+        # diffing against less than it should. A manual run, or a diff that
+        # cannot be worked out, runs everything.
         #
         # Allowlists, so a new top-level directory of code needs adding here.
         # Markdown is documentation wherever it sits.
         #
         # Whether this run releases is the one answer every release job reads,
         # independent of the diff. A pull request: a release PR (branch
-        # `release-*`, or a version change), which runs everything and
-        # publishes nothing. A push: it changes the version (compared with the
-        # commit before the whole push) and that version is not published. A
-        # manual run on main: the version is not published.
+        # `release-v*`, or a version change), which runs everything and
+        # publishes nothing. On main, a push whose commit changes the version
+        # (against HEAD^1), or a manual run, while that version is not
+        # published. Only the commit that changes the version releases, so a
+        # push landing while a release still runs cannot release it again; a
+        # manual run retries a release that never happened.
         run: |
           app=true chart=true release=false
           version_of() { jq -r .version; }
           version=$(version_of < deploy/pulumi/package.json)
-          prior=HEAD^1
-          if [ "$EVENT" = push ] && [ -n "$BEFORE" ] && git fetch -q --depth=1 origin "$BEFORE" 2>/dev/null; then
-            prior=$BEFORE
-          fi
           bumped=false
-          if [ "$(git show "$prior:deploy/pulumi/package.json" 2>/dev/null | version_of)" != "$version" ]; then
+          if [ "$(git show "HEAD^1:deploy/pulumi/package.json" 2>/dev/null | version_of)" != "$version" ]; then
             bumped=true
           fi
           # The package registry is the record of what is out; a package that
@@ -98,26 +96,31 @@ jobs:
           }
           case "$EVENT" in
             pull_request)
-              case "$HEAD_REF" in release-*) bumped=true ;; esac
+              case "$HEAD_REF" in release-v*) bumped=true ;; esac
               release=$bumped
               ;;
-            push)
-              if [ "$bumped" = true ] && ! published; then release=true; fi
-              ;;
             *)
-              if [ "$GITHUB_REF" = refs/heads/main ] && ! published; then release=true; fi
+              if [ "$GITHUB_REF" = refs/heads/main ] && { [ "$EVENT" = workflow_dispatch ] || [ "$bumped" = true ]; } \
+                && ! published; then
+                release=true
+              fi
               ;;
           esac
           base=HEAD^1
           if [ "$EVENT" = "push" ]; then
+            base=
             passed=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci-cd.yml --branch main --event push \
-              --status success --limit 1 --json headSha --jq '.[0].headSha' 2>/dev/null || true)
-            if [ -n "$passed" ] && [ "$passed" != "$(git rev-parse HEAD)" ] && git fetch -q --deepen=100 origin main && git merge-base --is-ancestor "$passed" HEAD; then
+              --status success --limit 1 --json headSha --jq '.[0].headSha // empty' || true)
+            if [ "$passed" = "$(git rev-parse HEAD)" ]; then
+              base=HEAD^1
+            elif [ -n "$passed" ] && git fetch -q --deepen=200 origin main && git merge-base --is-ancestor "$passed" HEAD; then
               base=$passed
+            else
+              echo "::notice::no passed run on main within reach -- running everything"
             fi
           fi
           touches() { printf '%s\n' "$files" | grep -E "$1" | grep -qvE '\.md$'; }
-          if [ "$EVENT" != "workflow_dispatch" ] && [ "$release" = false ] && files=$(git diff --name-only "$base" HEAD); then
+          if [ "$EVENT" != "workflow_dispatch" ] && [ "$release" = false ] && [ -n "$base" ] && files=$(git diff --name-only "$base" HEAD); then
             echo "changes since $(git rev-parse --short "$base"):"
             printf '%s\n' "$files" | sed 's/^/  /'
             # What the image is built from.
