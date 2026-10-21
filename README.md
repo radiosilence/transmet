@@ -67,8 +67,26 @@ scripts/push-pages 2
 ## Releasing
 
 Bump `deploy/pulumi/package.json` and `APP_VERSION` in
-`deploy/pulumi/src/versions.ts` together. A push to `main` builds the image and,
-for a version not yet published, tags it and publishes the chart.
+`deploy/pulumi/src/versions.ts` together. The push to `main` that changes the
+version, when that version is not yet published, tags the image with it and
+then publishes the chart. A manual run of the workflow does the same for an
+unpublished version, which is how a failed release is retried.
+
+## CI/CD
+
+`.github/workflows/ci-cd.yml` runs CI, then CD on `main`. The `changes` job
+works out from the diff which domains a change touches: `app` (`web/`,
+`server/`, `Dockerfile`) and `chart` (`deploy/`). Jobs for an untouched domain
+are skipped, and a skipped job is a pass, so a change to `scripts/` or to
+Markdown runs nothing. A new top-level directory the image or chart is built
+from must be added to `changes`' allowlists. Changes under `.github/`, release
+runs and manual runs count for every domain.
+
+`Checks` aggregates every CI job and is the only status a ruleset should
+require. On `main`, a push that changes the app pushes
+`ghcr.io/radiosilence/transmet:sha-<commit>` alongside the checks; CD retags
+that image with the version and publishes the chart only after `Checks`
+passes.
 
 ## Local
 

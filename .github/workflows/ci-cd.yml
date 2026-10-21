@@ -1,0 +1,281 @@
+name: CI/CD
+
+# Two halves in one run, so CD promotes the image CI built.
+#
+# CI ends in `Checks`, the one status a ruleset should require. Each job runs
+# only for the domains the change touches (see `changes`); a skipped job passes
+# `Checks`, a failed or cancelled one fails it.
+#
+# The image and the chart share the chart's version. Every push to main that
+# changes what the image contains pushes `sha-<commit>`, immutable, alongside
+# the checks. A push that changes the version to one not yet published (or a
+# manual run while it is unpublished) then tags that image with the version and
+# publishes the chart, after `Checks`. A version is released once, so a pinned
+# deploy never changes under its pin.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A pull request's newer push cancels its older run, and so does a newer push
+# to main that releases nothing. A push that changes the chart's package.json
+# may release, and a manual run is how a failed release is retried: both share
+# one group that is never cancelled, so two runs that may release go one at a
+# time and the second sees what the first published.
+concurrency:
+  group: "ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || (github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.modified, 'deploy/pulumi/package.json')) && 'release' || 'main' }}"
+  cancel-in-progress: "${{ github.event_name == 'pull_request' || (github.event_name == 'push' && !contains(github.event.head_commit.modified, 'deploy/pulumi/package.json')) }}"
+
+jobs:
+  # ── CI ──────────────────────────────────────────────────────────────────
+
+  changes:
+    name: Changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+      packages: read
+    outputs:
+      app: ${{ steps.filter.outputs.app }}
+      chart: ${{ steps.filter.outputs.chart }}
+      release: ${{ steps.filter.outputs.release }}
+      version: ${{ steps.filter.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+      - id: filter
+        env:
+          EVENT: ${{ github.event_name }}
+          HEAD_REF: ${{ github.head_ref }}
+          GH_TOKEN: ${{ github.token }}
+        # The domains a change touches, from its diff. A pull request's is
+        # against its base (the merge commit's first parent). A push's is
+        # against the last commit on main whose run passed, so a push whose run
+        # was cancelled by the next one still ships with it. If that commit
+        # cannot be found or reached, the push runs everything rather than
+        # diffing against less than it should. A manual run, or a diff that
+        # cannot be worked out, runs everything.
+        #
+        # Allowlists, so a new top-level directory of code needs adding here.
+        # Markdown is documentation wherever it sits.
+        #
+        # Whether this run releases is the one answer every release job reads,
+        # independent of the diff. A pull request: a release PR (branch
+        # `release-v*`, or a version change), which runs everything and
+        # publishes nothing. On main, a push whose commit changes the version
+        # (against HEAD^1), or a manual run, while that version is not
+        # published. Only the commit that changes the version releases, so a
+        # push landing while a release still runs cannot release it again; a
+        # manual run retries a release that never happened.
+        run: |
+          app=true chart=true release=false
+          version=$(jq -r .version deploy/pulumi/package.json)
+          bumped=false
+          if [ "$(git show "HEAD^1:deploy/pulumi/package.json" 2>/dev/null | jq -r .version)" != "$version" ]; then
+            bumped=true
+          fi
+          case "$EVENT" in
+            pull_request)
+              case "$HEAD_REF" in release-v*) bumped=true ;; esac
+              release=$bumped
+              ;;
+            *)
+              # The package registry is the record of what is out; a package
+              # that does not exist has published nothing. If it cannot be
+              # asked, fail rather than guess either way.
+              if [ "$GITHUB_REF" = refs/heads/main ] && { [ "$EVENT" = workflow_dispatch ] || [ "$bumped" = true ]; }; then
+                if ! versions=$(gh api "/users/radiosilence/packages/npm/transmet-pulumi/versions" --paginate -q '.[].name' 2>&1); then
+                  if ! grep -q 'HTTP 404' <<< "$versions"; then
+                    echo "::error::could not list published versions: $versions"
+                    exit 1
+                  fi
+                  versions=
+                fi
+                grep -qxF "$version" <<< "$versions" || release=true
+              fi
+              ;;
+          esac
+          base=HEAD^1
+          if [ "$EVENT" = "push" ]; then
+            base=
+            passed=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci-cd.yml --branch main --event push \
+              --status success --limit 1 --json headSha --jq '.[0].headSha // empty' || true)
+            if [ "$passed" = "$(git rev-parse HEAD)" ]; then
+              base=HEAD^1
+            elif [ -n "$passed" ] && git fetch -q --deepen=200 origin main && git merge-base --is-ancestor "$passed" HEAD; then
+              base=$passed
+            else
+              echo "::notice::no passed run on main within reach -- running everything"
+            fi
+          fi
+          # Each grep reads all its input, so no stage of the pipe is cut short.
+          touches() { [ "$(grep -E "$1" <<< "$files" | grep -cvE '\.md$')" -gt 0 ]; }
+          if [ "$EVENT" != "workflow_dispatch" ] && [ "$release" = false ] && [ -n "$base" ] && files=$(git diff --name-only "$base" HEAD); then
+            echo "changes since $(git rev-parse --short "$base"):"
+            printf '%s\n' "$files" | sed 's/^/  /'
+            # What the image is built from.
+            touches '^web/|^server/|^Dockerfile$|^\.github/' || app=false
+            touches '^deploy/|^\.github/' || chart=false
+          fi
+          {
+            echo "app=$app"
+            echo "chart=$chart"
+            echo "release=$release"
+            echo "version=$version"
+          } | tee -a "$GITHUB_OUTPUT"
+
+  web:
+    name: Web
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: changes
+    # Pull requests only: elsewhere `image` builds the same bundle.
+    if: github.event_name == 'pull_request' && needs.changes.outputs.app == 'true'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      - working-directory: web
+        run: bun install --frozen-lockfile && bun run build
+
+  chart:
+    name: Chart
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: changes
+    if: needs.changes.outputs.chart == 'true'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          registry-url: https://npm.pkg.github.com
+      - working-directory: deploy/pulumi
+        run: |
+          npm ci
+          pkg=$(node -p "require('./package.json').version")
+          app=$(sed -n 's/^export const APP_VERSION = "\(.*\)";$/\1/p' src/versions.ts)
+          [ "$pkg" = "$app" ] || { echo "::error::package.json=$pkg APP_VERSION=$app"; exit 1; }
+          npx tsc -p tsconfig.json
+          npm run build
+
+  # Main only: the image, pushed under its commit alongside the checks. The
+  # tag is immutable, so pushing it before `Checks` passes promotes nothing;
+  # CD moves the version tag onto it. A pull request does not build it: the
+  # web build above checks the code, and the final stage only copies.
+  image:
+    name: Image
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: changes
+    if: github.event_name != 'pull_request' && needs.changes.outputs.app == 'true'
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # A re-run, or a manual run of a commit already built, keeps the image
+      # it has: a rebuild would change its digest under a version tag.
+      - id: existing
+        run: |
+          if docker buildx imagetools inspect "ghcr.io/radiosilence/transmet:sha-$GITHUB_SHA" > /dev/null 2>&1; then
+            echo "::notice::sha-$GITHUB_SHA already exists; not rebuilding"
+            echo "built=true" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.existing.outputs.built != 'true'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ghcr.io/radiosilence/transmet:sha-${{ github.sha }}
+          labels: org.opencontainers.image.source=https://github.com/radiosilence/transmet
+          cache-from: type=registry,ref=ghcr.io/radiosilence/transmet:buildcache
+          cache-to: type=registry,ref=ghcr.io/radiosilence/transmet:buildcache,mode=max
+
+  checks:
+    name: Checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [changes, web, chart, image]
+    if: always()
+    steps:
+      - env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          echo "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          bad=$(echo "$NEEDS" | jq -r '[to_entries[] | select(.value.result != "success" and .value.result != "skipped") | .key] | join(" ")')
+          if [ -n "$bad" ]; then
+            echo "::error::not passed: $bad"
+            exit 1
+          fi
+
+  # ── CD ──────────────────────────────────────────────────────────────────
+  #
+  # Main only, after `Checks`. `checks` runs whatever its needs did, so every
+  # job here states the results it depends on rather than relying on the
+  # default.
+
+  # The version tag onto the image CI pushed. Retagging needs no rebuild.
+  image-release:
+    name: Image (release)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [changes, image, checks]
+    if: ${{ !cancelled() && needs.checks.result == 'success' && needs.image.result == 'success' && needs.changes.outputs.release == 'true' && github.event_name != 'pull_request' }}
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE: ghcr.io/radiosilence/transmet
+      VERSION: ${{ needs.changes.outputs.version }}
+    steps:
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # A version tag, once set, is never moved, so a retried release keeps
+      # the image it first shipped.
+      - run: |
+          if docker buildx imagetools inspect "$IMAGE:$VERSION" > /dev/null 2>&1; then
+            echo "::notice::$IMAGE:$VERSION already exists; leaving it"
+            exit 0
+          fi
+          docker buildx imagetools create -t "$IMAGE:$VERSION" "$IMAGE:sha-$GITHUB_SHA"
+
+  # Last, since a published version cannot be replaced and the chart pins the
+  # image by that version.
+  chart-release:
+    name: Chart (release)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [changes, chart, checks, image-release]
+    if: ${{ !cancelled() && needs.checks.result == 'success' && needs.chart.result == 'success' && needs.image-release.result == 'success' && needs.changes.outputs.release == 'true' && github.event_name != 'pull_request' }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          registry-url: https://npm.pkg.github.com
+      - working-directory: deploy/pulumi
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm ci && npm publish

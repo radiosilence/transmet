@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- CI and CD are one workflow gated by `Checks`, with jobs skipped for domains
+  a change does not touch. A release now needs a push that changes the version;
+  a push that lands while the version is unpublished no longer releases it, and
+  a manual run retries a failed release. The version tag is moved onto the
+  image CI built rather than rebuilt.
+
 ## 0.3.4
 
 - On wide screens a whole arc fits on its shelf, and the arrows are hidden;
