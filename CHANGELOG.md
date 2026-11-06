@@ -1,7 +1,11 @@
 # Changelog
 
-## Unreleased
+## 0.4.0
 
+- The server is rewritten in Rust (axum) and the image is built `FROM scratch`
+  around a static musl binary, replacing bun's distroless image. Behaviour is
+  unchanged, and the session cookie is computed the same way, so the upgrade
+  signs nobody out.
 - CI and CD are one workflow gated by `Checks`, with jobs skipped for domains
   a change does not touch. A release now needs a push that changes the version;
   a push that lands while the version is unpublished no longer releases it, and

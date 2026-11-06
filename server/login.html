@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0b0a">
+<title>Transmet</title>
+<link rel="manifest" href="/app.webmanifest">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<style>
+  :root { color-scheme: dark; --ink: #0b0b0a; --paper: #f1ede4; --acid: #c6ff1a; --hot: #ff2e4c; }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { height: 100%; background: var(--ink); color: var(--paper); }
+  body {
+    font: 500 16px/1.4 ui-sans-serif, -apple-system, "Helvetica Neue", sans-serif;
+    display: grid; place-items: center; padding: 24px;
+    padding-bottom: max(24px, env(safe-area-inset-bottom));
+  }
+  form { width: min(100%, 340px); display: grid; gap: 14px; }
+  h1 {
+    font: 900 clamp(44px, 14vw, 64px)/0.85 "Arial Narrow", "Helvetica Neue Condensed", ui-sans-serif, sans-serif;
+    font-stretch: condensed; letter-spacing: -0.02em; text-transform: uppercase;
+  }
+  h1 span { color: var(--acid); }
+  p { color: #8d8a82; font-size: 14px; }
+  input, button {
+    font: inherit; border-radius: 12px; padding: 15px 16px; border: 1px solid #2a2926;
+    width: 100%; background: #151513; color: var(--paper);
+  }
+  input:focus { outline: 2px solid var(--acid); outline-offset: 1px; }
+  button { background: var(--acid); color: var(--ink); border: 0; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; }
+  .err { color: var(--hot); min-height: 1.4em; font-size: 14px; }
+  .sso {
+    display: block; text-align: center; text-decoration: none; border-radius: 12px; padding: 15px 16px;
+    background: var(--acid); color: var(--ink); font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase;
+  }
+  .or { text-align: center; }
+</style>
+</head>
+<body>
+<form method="post" action="/login">
+  <h1>Trans<br><span>met</span></h1>
+  <p>The city is waiting.</p>
+  {{sso}}
+  <input type="password" name="password" placeholder="Password" autocomplete="current-password" {{autofocus}} required>
+  <button type="submit">Enter</button>
+  <div class="err">{{error}}</div>
+</form>
+</body>
+</html>
