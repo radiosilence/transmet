@@ -93,14 +93,25 @@ export function Reader({ issue, issues }: { issue: Issue; issues: Issue[] }) {
     );
     lightbox.addFilter("thumbEl", (el, _data, i) => (i === 0 && thumb ? thumb : el) as HTMLElement);
     lightbox.addFilter("placeholderSrc", (src, content) => content.data.msrc ?? src);
+    // Progress and the address are written once turning stops: each write
+    // re-renders the shop underneath and rewrites localStorage, which costs
+    // frames mid-slide, and Safari throws once replaceState is called about a
+    // hundred times in a few seconds.
+    let settle: ReturnType<typeof setTimeout> | undefined;
+    const record = () => {
+      const page = Math.min(lightbox.currIndex, total - 1);
+      useShelf.getState().read(issue.id, page, total);
+      history.replaceState(null, "", `/read/${issue.id}?p=${page}`);
+    };
     lightbox.on("change", () => {
-      const i = lightbox.currIndex;
-      setIndex(i);
-      useShelf.getState().read(issue.id, Math.min(i, total - 1), total);
-      history.replaceState(null, "", `/read/${issue.id}?p=${Math.min(i, total - 1)}`);
+      setIndex(lightbox.currIndex);
+      clearTimeout(settle);
+      settle = setTimeout(record, 600);
     });
     lightbox.on("close", () => {
       closing = true;
+      clearTimeout(settle);
+      record();
     });
     lightbox.on("destroy", () => {
       if (closing) navigate("/");
@@ -112,7 +123,11 @@ export function Reader({ issue, issues }: { issue: Issue; issues: Issue[] }) {
     keepAhead(issues, issue);
 
     return () => {
-      if (!closing) lightbox.destroy();
+      clearTimeout(settle);
+      if (!closing) {
+        record();
+        lightbox.destroy();
+      }
     };
   }, [issue, issues, next, total]);
 
@@ -121,10 +136,14 @@ export function Reader({ issue, issues }: { issue: Issue; issues: Issue[] }) {
   }, [chrome]);
 
   // Keeps the current page's thumbnail centred in the scrubber as pages turn.
+  // The strip is scrolled directly: scrollIntoView also scrolls the document
+  // behind the viewer on iOS, which resizes it mid-turn.
   useEffect(() => {
-    scrubber.current
-      ?.querySelector(`[data-i="${Math.min(index, total - 1)}"]`)
-      ?.scrollIntoView({ inline: "center", block: "nearest", behavior: "smooth" });
+    const strip = scrubber.current;
+    const thumb = strip?.querySelector<HTMLElement>(`[data-i="${Math.min(index, total - 1)}"]`);
+    if (!strip || !thumb) return;
+    const left = thumb.offsetLeft - (strip.clientWidth - thumb.offsetWidth) / 2;
+    strip.scrollTo({ left, behavior: "smooth" });
   }, [index, total, chrome]);
 
   return (

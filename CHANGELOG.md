@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.4.1
+
+- Turning pages quickly no longer breaks the reader. Progress and the address
+  were written on every turn, and Safari throws once a page replaces its
+  history entry about a hundred times in a few seconds; both are now written
+  when turning stops, and when the reader closes.
+- The reader keeps the display's frame rate while pages are dragged and
+  zoomed. Its bars are opaque instead of blurring the page beneath every frame,
+  the shop underneath no longer re-renders on each turn, and the document
+  behind the reader is locked so it cannot scroll and resize the viewer.
+- The shop scrolls more smoothly: the issue stickers no longer blend with the
+  cover beneath, and the sign's flicker no longer repaints its glow.
+
 ## 0.4.0
 
 - The server is rewritten in Rust (axum) and the image is built `FROM scratch`
