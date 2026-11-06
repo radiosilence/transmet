@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.3.5
+## 0.4.1
 
 - Turning pages quickly no longer breaks the reader. Progress and the address
   were written on every turn, and Safari throws once a page replaces its
@@ -12,6 +12,18 @@
   behind the reader is locked so it cannot scroll and resize the viewer.
 - The shop scrolls more smoothly: the issue stickers no longer blend with the
   cover beneath, and the sign's flicker no longer repaints its glow.
+
+## 0.4.0
+
+- The server is rewritten in Rust (axum) and the image is built `FROM scratch`
+  around a static musl binary, replacing bun's distroless image. Behaviour is
+  unchanged, and the session cookie is computed the same way, so the upgrade
+  signs nobody out.
+- CI and CD are one workflow gated by `Checks`, with jobs skipped for domains
+  a change does not touch. A release now needs a push that changes the version;
+  a push that lands while the version is unpublished no longer releases it, and
+  a manual run retries a failed release. The version tag is moved onto the
+  image CI built rather than rebuilt.
 
 ## 0.3.4
 
