@@ -140,15 +140,11 @@ fn under(root: &Path, path: &str) -> Option<PathBuf> {
     (depth > 0).then_some(resolved)
 }
 
-async fn file(
-    req: Request,
-    path: Option<PathBuf>,
-    cache_control: &'static str,
-) -> Result<Response, Request> {
-    let Some(path) = path else { return Err(req) };
-    if !tokio::fs::metadata(&path).await.is_ok_and(|m| m.is_file()) {
-        return Err(req);
-    }
+async fn is_file(path: &Path) -> bool {
+    tokio::fs::metadata(path).await.is_ok_and(|m| m.is_file())
+}
+
+async fn serve(req: Request, path: PathBuf, cache_control: &'static str) -> Response {
     let mut res = ServeFile::new(path)
         .oneshot(req)
         .await
@@ -158,7 +154,7 @@ async fn file(
         header::CACHE_CONTROL,
         HeaderValue::from_static(cache_control),
     );
-    Ok(res)
+    res
 }
 
 fn login_page(app: &App, error: Option<&str>) -> Response {
@@ -349,9 +345,10 @@ async fn handle(State(app): State<Arc<App>>, req: Request) -> Response {
         } else {
             IMMUTABLE
         };
-        return file(req, under(&app.pages_dir, rel), cache)
-            .await
-            .unwrap_or_else(|_| (StatusCode::NOT_FOUND, "not found").into_response());
+        return match under(&app.pages_dir, rel) {
+            Some(p) if is_file(&p).await => serve(req, p, cache).await,
+            _ => (StatusCode::NOT_FOUND, "not found").into_response(),
+        };
     }
 
     let cache = if path.starts_with("/assets/") {
@@ -364,14 +361,17 @@ async fn handle(State(app): State<Arc<App>>, req: Request) -> Response {
     } else {
         under(&app.web_dir, &path)
     };
-    let req = match file(req, target, cache).await {
-        Ok(res) => return res,
-        Err(req) => req,
-    };
+    if let Some(p) = target
+        && is_file(&p).await
+    {
+        return serve(req, p, cache).await;
+    }
     let index = app.web_dir.join("index.html");
-    file(req, Some(index), REVALIDATE)
-        .await
-        .unwrap_or_else(|_| (StatusCode::NOT_FOUND, "not found").into_response())
+    if is_file(&index).await {
+        serve(req, index, REVALIDATE).await
+    } else {
+        (StatusCode::NOT_FOUND, "not found").into_response()
+    }
 }
 
 async fn shutdown() {
