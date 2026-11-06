@@ -21,7 +21,8 @@ If you genuinely think you have lost money due to this I will give you my last f
 - `scripts/push-pages` publishes `pages/` as `ghcr.io/radiosilence/transmet-pages`,
   a data-only image. CI has no access to the source, so the pages are pushed
   once from a machine that has them and the app image copies from that.
-- `server/server.ts` is the sign-in gate and static server. Sign-on goes through
+- `server/` is the sign-in gate and static server, in Rust (axum) so the image
+  is one static binary on `scratch`. Sign-on goes through
   the estate's Hydra, whose GitHub allowlist is what decides who reads; the
   password works without it, so an outage at the provider locks nobody out.
   Either way in sets the same cookie, an HMAC keyed by the password, so there is
@@ -92,5 +93,5 @@ passes.
 
 ```sh
 cd web && bun install && bun run build && cd ..
-TRANSMET_PASSWORD=test WEB_DIR=$PWD/web/dist PAGES_DIR=$PWD/pages bun server/server.ts
+TRANSMET_PASSWORD=test WEB_DIR=$PWD/web/dist PAGES_DIR=$PWD/pages cargo run --manifest-path server/Cargo.toml
 ```
