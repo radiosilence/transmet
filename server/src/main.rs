@@ -67,6 +67,9 @@ const B64URL: GeneralPurpose = GeneralPurpose::new(
 
 struct Oidc {
     issuer: String,
+    /// Parsed at startup, so a malformed issuer stops the server there rather
+    /// than on the first sign-in.
+    authorize: url::Url,
     client_id: String,
     client_secret: String,
     redirect_uri: String,
@@ -243,15 +246,13 @@ async fn exchange(app: &App, oidc: &Oidc, code: &str, verifier: &str) -> Option<
 
 async fn handle(State(app): State<Arc<App>>, req: Request) -> Response {
     let path = req.uri().path().to_owned();
-    let query: HashMap<String, String> = req
-        .uri()
-        .query()
-        .map(|q| {
-            url::form_urlencoded::parse(q.as_bytes())
-                .into_owned()
-                .collect()
-        })
-        .unwrap_or_default();
+    // The first of a repeated parameter wins, as URLSearchParams.get had it.
+    let mut query = HashMap::new();
+    for (k, v) in url::form_urlencoded::parse(req.uri().query().unwrap_or_default().as_bytes()) {
+        query
+            .entry(k.into_owned())
+            .or_insert_with(|| v.into_owned());
+    }
 
     if path == "/_health" {
         return "ok".into_response();
@@ -285,8 +286,7 @@ async fn handle(State(app): State<Arc<App>>, req: Request) -> Response {
             let state = random_b64url();
             let verifier = random_b64url();
             let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
-            let mut authorize =
-                url::Url::parse(&format!("{}/oauth2/auth", oidc.issuer)).expect("valid issuer URL");
+            let mut authorize = oidc.authorize.clone();
             authorize
                 .query_pairs_mut()
                 .append_pair("client_id", &oidc.client_id)
@@ -385,11 +385,16 @@ async fn shutdown() {
 
 #[tokio::main]
 async fn main() {
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("no other TLS provider installed");
     let password = env("TRANSMET_PASSWORD");
     let oidc = std::env::var("OIDC_ISSUER")
         .ok()
         .filter(|v| !v.is_empty())
         .map(|issuer| Oidc {
+            authorize: url::Url::parse(&format!("{issuer}/oauth2/auth"))
+                .unwrap_or_else(|e| panic!("OIDC_ISSUER is not a URL: {e}")),
             client_id: env("OIDC_CLIENT_ID"),
             client_secret: env("OIDC_CLIENT_SECRET"),
             redirect_uri: format!("{}/auth/callback", env("PUBLIC_URL")),
@@ -446,7 +451,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn session_token_matches_the_bun_server() {
+    fn session_token_keeps_existing_cookies_valid() {
         assert_eq!(
             session_token("test"),
             "be6b2bc454d8592c03552956f1519f98b3401a3b4872a32245269f712d2c92ee"

@@ -33,7 +33,7 @@ FROM scratch
 COPY --from=pages /pages /pages
 # The token exchange goes to the provider's public hostname when no backchannel
 # is configured, and rustls reads the system trust store.
-COPY --from=gcr.io/distroless/static:latest \
+COPY --from=gcr.io/distroless/static:latest@sha256:448810357cc8e67b7208988abdba0f5ec3d3aebee0a5b13eb624979792cffc0f \
      /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=web /web/dist /app/web
 COPY --from=server /transmet /transmet
